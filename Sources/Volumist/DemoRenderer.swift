@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// for the README. It doesn't touch audio: what it shows is scripted, not a recording.
 enum DemoRenderer {
     private static let fps = 15.0
-    private static let duration = 30.0
+    private static let duration = 31.0
     private static let zoom: CGFloat = 2
     private static let canvas = CGSize(width: 720, height: 700)
     private static var viewport: CGFloat { canvas.height / zoom }
@@ -42,7 +42,8 @@ enum DemoRenderer {
         (0, 300, 60), (1.2, 225, 175), (2, 225, 175), (4, 156, 175), (5, 156, 175),
         (6.3, 334, 97), (8, 334, 97), (9.5, 200, 330), (15.5, 200, 330),
         (17.8, 334, 190), (19.5, 334, 190), (20.8, 38, 255), (23, 38, 255),
-        (24.3, 300, 279), (26.8, 300, 279), (27.8, 201, 220), (28, 201, 220), (29, 159, 220), (30, 159, 220),
+        (24.3, 312, 279), (25.3, 312, 279), (26, 270, 331), (26.8, 270, 331), (28, 201, 220), (28.5, 201, 220),
+        (29.5, 159, 220), (31, 159, 220),
     ]
 
     private static func pointer(at time: Double) -> CGPoint {
@@ -53,7 +54,13 @@ enum DemoRenderer {
         return CGPoint(x: 159, y: 220)
     }
 
-    private static let clicks = [6.9, 18.5, 21.6, 25]
+    private static let clicks = [6.9, 18.5, 21.6, 25, 26.4]
+
+    // The equalizer's dropdown. A real menu can't be captured here, so it is drawn to look the same.
+    private static let menuOpens = 25.0
+    private static let menuCloses = 26.4
+    private static let menuFrame = CGRect(x: 198, y: 292, width: 150, height: 144)
+    private static let menuRowHeight: CGFloat = 22
 
     private static func icon(_ path: String) -> NSImage {
         let file = Bundle(path: path)?.object(forInfoDictionaryKey: "CFBundleIconFile") as? String
@@ -70,9 +77,9 @@ enum DemoRenderer {
                      "VLC": icon("/Applications/VLC.app"), "Zoom": icon("/Applications/zoom.us.app")]
         func app(_ name: String, _ volume: Double, playing: Bool, muted: Bool = false, output: String? = nil,
                  lowered: Bool = false, balance: Double = 0, equalizer: [Double] = Equalizer.flat,
-                 leveling: Bool = false) -> AudioApp {
+                 leveling: Bool = false, neverLower: Bool = false) -> AudioApp {
             AudioApp(id: name, name: name, icon: icons[name], isPlaying: playing, volume: volume, isMuted: muted,
-                     outputUID: output, outputName: output, outputMissing: false, isLowered: lowered,
+                     outputUID: output, outputName: output, outputMissing: false, neverLower: neverLower, isLowered: lowered,
                      balance: balance, equalizer: equalizer, levelsVolume: leveling)
         }
 
@@ -103,9 +110,8 @@ enum DemoRenderer {
             camera += (focus(at: time) - camera) * 0.07
 
             let volume = 1 - 0.45 * eased(time, from: 2, to: 4)
-            let boost = eased(time, from: 25.2, to: 26.5)
-            let equalizer = Equalizer.presets[1].gains.map { $0 * boost }
-            let balance = -0.35 * eased(time, from: 28, to: 29)
+            let equalizer = time >= menuCloses ? Equalizer.presets[1].gains : Equalizer.flat
+            let balance = -0.35 * eased(time, from: 28.5, to: 29.5)
             let leveling = time >= 21.6
             let musicMuted = time >= 6.9
             let spotifyLevel = (0.5 + 0.25 * sin(time * 9) * sin(time * 2.3)) * volume * volume * lowering
@@ -119,7 +125,7 @@ enum DemoRenderer {
                     output: "External Speakers", lowered: inCall, balance: balance,
                     equalizer: equalizer, leveling: leveling),
                 app("VLC", 0.6, playing: true, lowered: inCall),
-                app("Zoom", 1, playing: inCall),
+                app("Zoom", 1, playing: inCall, neverLower: true),
             ], call: inCall ? "Zoom" : nil, expanded: time >= 18.5 ? "Spotify" : nil)
             engine.levels.levels = ["Music": Float(podcast), "Spotify": Float(spotifyLevel),
                                     "VLC": Float(video), "Zoom": Float(voice)]
@@ -130,7 +136,7 @@ enum DemoRenderer {
             guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds),
                   let image = compose(panel: bitmap, view: view, camera: camera, time: time) else { exit(1) }
             CGImageDestinationAddImage(destination, image, frameProperties)
-            if let keyFrames, frame % 75 == 40 {
+            if let keyFrames, frame % 75 == 40 || frame == 385 || frame == 392 {
                 let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
                 try? data?.write(to: URL(fileURLWithPath: "\(keyFrames)/frame-\(frame).png"))
             }
@@ -159,6 +165,37 @@ enum DemoRenderer {
         context.interpolationQuality = .high
         context.draw(panel, in: CGRect(x: 0, y: canvas.height - (size.height - top) * zoom,
                                        width: size.width * zoom, height: size.height * zoom))
+
+        if time >= menuOpens && time < menuCloses {
+            let origin = point(menuFrame.minX, menuFrame.maxY)
+            let rect = NSRect(x: origin.x, y: origin.y, width: menuFrame.width * zoom, height: menuFrame.height * zoom)
+            let shadow = NSShadow()
+            shadow.shadowBlurRadius = 24
+            shadow.shadowOffset = NSSize(width: 0, height: -8)
+            shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
+            NSGraphicsContext.saveGraphicsState()
+            shadow.set()
+            NSColor(white: 0.97, alpha: 1).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 16, yRadius: 16).fill()
+            NSGraphicsContext.restoreGraphicsState()
+
+            let hovered = pointer(at: time)
+            for (index, preset) in Equalizer.presets.enumerated() {
+                let rowTop = menuFrame.minY + 6 + CGFloat(index) * menuRowHeight
+                let isHovered = hovered.y >= rowTop && hovered.y < rowTop + menuRowHeight
+                    && hovered.x >= menuFrame.minX && hovered.x < menuFrame.maxX
+                let bottom = point(menuFrame.minX + 5, rowTop + menuRowHeight)
+                if isHovered {
+                    NSColor.systemBlue.setFill()
+                    NSBezierPath(roundedRect: NSRect(x: bottom.x, y: bottom.y, width: (menuFrame.width - 10) * zoom,
+                                                     height: menuRowHeight * zoom), xRadius: 8, yRadius: 8).fill()
+                }
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 25), .foregroundColor: isHovered ? NSColor.white : NSColor.black]
+                if index == 0 { ("✓" as NSString).draw(at: NSPoint(x: bottom.x + 10, y: bottom.y + 7), withAttributes: attributes) }
+                (preset.name as NSString).draw(at: NSPoint(x: bottom.x + 42, y: bottom.y + 7), withAttributes: attributes)
+            }
+        }
 
         for click in clicks where time >= click && time < click + 0.5 {
             let progress = (time - click) / 0.5
