@@ -155,7 +155,7 @@ final class AudioEngine: ObservableObject {
     private let updatesKey = "checksForUpdates"
 
     /// Sample state for rendering the UI, with no audio side effects.
-    init(preview apps: [AudioApp], output: String, call: String, expanded: String?, previewLevels: [String: Float]) {
+    init(preview apps: [AudioApp], output: String, call: String?, expanded: String?, previewLevels: [String: Float]) {
         self.apps = apps
         outputName = output
         callAppName = call
@@ -170,6 +170,13 @@ final class AudioEngine: ObservableObject {
         })
         levels.levels = previewLevels
         permission = .granted
+    }
+
+    func setPreview(apps: [AudioApp], call: String?, expanded: String?) {
+        guard isPreview else { return }
+        self.apps = apps
+        callAppName = call
+        expandedApp = expanded
     }
 
     /// Diagnostics: the apps holding the microphone right now, whether or not they would trigger lowering.

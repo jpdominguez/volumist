@@ -42,7 +42,8 @@ open -n build/Volumist.app --args --check "$PWD/diagnostics"
 
 `--selftest <pid> <log-file>` does a lower-level gain measurement on a single process, `--ui-check <log-file>` opens
 and closes an app's details in the real popover and verifies that it resizes without moving, and
-`--render-preview <png>` regenerates `docs/screenshot.png` with sample data.
+`--render-preview <png>` regenerates `docs/screenshot.png` with sample data. `--render-demo <gif>` regenerates
+`docs/demo.gif`, which is scripted rather than recorded.
 
 Taps see an app's audio before it is muted, including global taps, so muting can't be verified by measuring. Listen
 to it. Engine events are logged, and you can read them with:

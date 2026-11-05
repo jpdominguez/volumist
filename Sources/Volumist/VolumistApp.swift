@@ -8,6 +8,12 @@ enum Entry {
             SelfTest.run(arguments: Array(CommandLine.arguments[(index + 1)...]))
         } else if let index = CommandLine.arguments.firstIndex(of: "--render-preview") {
             MainActor.assumeIsolated { SelfTest.renderPreview(to: CommandLine.arguments[index + 1]) }
+        } else if let index = CommandLine.arguments.firstIndex(of: "--render-demo") {
+            let arguments = CommandLine.arguments
+            MainActor.assumeIsolated {
+                DemoRenderer.render(to: arguments[index + 1],
+                                    keyFrames: arguments.count > index + 2 ? arguments[index + 2] : nil)
+            }
         } else if let index = CommandLine.arguments.firstIndex(of: "--ui-check") {
             MainActor.assumeIsolated { SelfTest.checkExpansion(log: CommandLine.arguments[index + 1]) }
         } else if let index = CommandLine.arguments.firstIndex(of: "--check") {

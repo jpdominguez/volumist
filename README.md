@@ -17,7 +17,8 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" width="340" alt="Volumist menu bar window with separate volume sliders and output pickers for Spotify, VLC, Zoom and Discord">
+  <img src="docs/demo.gif" width="480" alt="Animated demo of Volumist: Spotify and VLC lower themselves when a Zoom call starts, return when it ends, and Spotify's balance, leveling and equalizer are adjusted">
+  <br><sub>The real interface, animated with sample data.</sub>
 </p>
 
 macOS has one volume slider for everything. Windows has had a volume mixer for years. Volumist brings the same
@@ -82,6 +83,10 @@ open build/Volumist.app
 ## Usage
 
 Click the menu bar icon to see the apps that are playing audio, plus any app you have already adjusted.
+
+<p align="center">
+  <img src="docs/screenshot.png" width="340" alt="Volumist menu bar window with separate volume sliders and output pickers for Spotify, VLC, Zoom and Discord">
+</p>
 
 | Control | What it does |
 | --- | --- |
