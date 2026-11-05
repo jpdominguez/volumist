@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+- Fixed the window sometimes reopening when closing it from the menu bar icon.
+
 ## 1.2.0
 
 - Automatic leveling for each app, to even out loud and quiet parts.

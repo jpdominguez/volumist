@@ -353,6 +353,27 @@ enum SelfTest {
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
             report += "closed by Escape: \(!controller.popover.isShown)\n"
             passed = passed && !controller.popover.isShown
+
+            // The menu bar item alternates between opening and closing.
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            var toggles = [Bool]()
+            for _ in 0..<6 {
+                controller.toggle()
+                RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+                toggles.append(controller.popover.isShown)
+            }
+            report += "menu bar item: \(toggles)\n"
+            passed = passed && toggles == [true, false, true, false, true, false]
+
+            // A press that closes the window from outside, then its release on the item.
+            controller.toggle()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            controller.popover.performClose(nil)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            controller.toggle()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            report += "press and release: stays closed: \(!controller.popover.isShown)\n"
+            passed = passed && !controller.popover.isShown
         }
         try? report.write(toFile: path, atomically: true, encoding: .utf8)
         exit(passed ? 0 : 1)

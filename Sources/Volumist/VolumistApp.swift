@@ -32,6 +32,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     private var outsideClickMonitor: Any?
     private var escapeMonitor: Any?
+    private var resignObserver: NSObjectProtocol?
+    private var lastClose = Date.distantPast
 
     init(engine: AudioEngine) {
         self.engine = engine
@@ -45,7 +47,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let host = NSHostingController(rootView: MixerView(engine: engine))
         host.sizingOptions = .preferredContentSize
         popover.contentViewController = host
-        popover.behavior = .transient
+        // Not .transient: it closes on mouse down, so the status item's click, which arrives on
+        // mouse up, would find it closed and reopen it. Volumist decides when it closes instead.
+        popover.behavior = .applicationDefined
         popover.animates = false
         popover.delegate = self
 
@@ -59,6 +63,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc func toggle() {
         if popover.isShown {
             popover.performClose(nil)
+        } else if Date().timeIntervalSince(lastClose) < 0.3 {
+            // The press on this same click already closed the window, as a click outside it or by
+            // deactivating the app, and this is its release. It must not open it again.
         } else if let button = statusItem?.button {
             // Active from the start, so that the first click inside doesn't have to activate it.
             NSApp.activate(ignoringOtherApps: true)
@@ -69,8 +76,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidShow(_ notification: Notification) {
         engine.setWindowOpen(true)
-        // A transient popover only closes by itself if macOS made Volumist the active app, which
-        // doesn't always happen. This monitor sees clicks in other apps, and never clicks in Volumist.
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.popover.performClose(nil) }
+        }
+        // This monitor sees clicks in other apps, and never clicks in Volumist.
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event } // Escape
             MainActor.assumeIsolated { self?.popover.performClose(nil) }
@@ -82,11 +93,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func popoverDidClose(_ notification: Notification) {
+        lastClose = Date()
         engine.setWindowOpen(false)
         if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
         outsideClickMonitor = nil
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
         escapeMonitor = nil
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = nil
     }
 }
 
