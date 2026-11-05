@@ -38,7 +38,9 @@ final class TapSession {
         vm_destroy(mixer)
     }
 
-    func setGain(_ gain: Float) { vm_set_gain(mixer, gain) }
+    /// `fade` takes about a second, for automatic changes. Otherwise it takes ~10 ms at 48 kHz,
+    /// fast enough to follow a slider without clicks.
+    func setGain(_ gain: Float, fade: Bool = false) { vm_set_gain(mixer, gain, fade ? 0.00005 : 0.002) }
 
     /// Adds or removes processes without interrupting the audio (e.g. a new browser helper).
     func update(processes new: [AudioObjectID]) throws {

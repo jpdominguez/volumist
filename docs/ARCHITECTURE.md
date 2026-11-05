@@ -48,6 +48,17 @@ For each app it decides:
   alone is enough.
 - **Which device?** The chosen one if it is connected, otherwise the system output.
 
+## Lowering during calls
+
+Each audio process reports whether it is using the microphone (`kAudioProcessPropertyIsRunningInput`), and
+`AudioEngine.refreshCall` treats a user app doing so as a call. System services are ignored, since some keep the
+microphone open permanently, as are gaps of under 2 seconds.
+
+An app is lowered if a call is active, it isn't in the call, it hasn't been excluded, and it is playing. Its gain is
+its normal gain multiplied by the lowering level, which uses the same curve as the sliders. Apps at their defaults
+get a tap for the duration of the call, and lose it once they have faded back up. Fades take about a second at
+48 kHz, and longer at lower sample rates, because the ramp is applied per sample.
+
 ## Design decisions
 
 **The tap stays muted between playbacks.** The tap keeps muting an adjusted app even while its I/O is stopped, so the

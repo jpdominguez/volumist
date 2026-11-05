@@ -6,18 +6,23 @@
 
 struct VMMixer {
     _Atomic float target;
+    _Atomic float ramp;
     float current;
 };
 
 VMMixer *vm_create(float initial_gain) {
     VMMixer *m = calloc(1, sizeof(VMMixer));
     atomic_store(&m->target, initial_gain);
+    atomic_store(&m->ramp, 0.002f);
     m->current = initial_gain;
     return m;
 }
 
 void vm_destroy(VMMixer *m) { free(m); }
-void vm_set_gain(VMMixer *m, float gain) { atomic_store(&m->target, gain); }
+void vm_set_gain(VMMixer *m, float gain, float ramp) {
+    atomic_store(&m->ramp, ramp);
+    atomic_store(&m->target, gain);
+}
 
 // Above 100 % the signal can exceed 1.0: compress it gently instead of clipping it.
 static inline float soft_limit(float x) {
@@ -51,7 +56,7 @@ OSStatus vm_ioproc(AudioObjectID device, const AudioTimeStamp *now,
 
     float target = atomic_load(&m->target);
     float gain = m->current;
-    const float ramp = 0.002f; // ~10 ms at 48 kHz: avoids clicks while the slider moves
+    float ramp = atomic_load(&m->ramp);
 
     UInt32 frames = in_frames;
     for (UInt32 b = 0; b < output->mNumberBuffers; b++) {

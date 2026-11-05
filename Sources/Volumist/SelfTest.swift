@@ -118,6 +118,7 @@ enum SelfTest {
         }
 
         wait(3)
+        for _ in 0..<120 where engine.permission != .granted { wait(1) } // time to answer the system prompt
         log("permission: \(engine.permission)  output: \(engine.outputName)")
         log("apps: \(state())")
         func fail(_ message: String) -> Never {
@@ -159,6 +160,36 @@ enum SelfTest {
         engine.setVolume(0.5, for: app.id)
         measure("50% again")
         engine.setVolume(1, for: app.id)
+        wait(6)
+
+        // Ducking: lowered while a call is active, with the app's own volume as the base.
+        log("microphone in use by: \(engine.liveMicrophoneApps.joined(separator: ", "))")
+        let savedDucking = engine.ducking
+        engine.ducking = DuckingOptions(isEnabled: true, level: 0.5, trigger: .callApps)
+        engine.simulatedCallApp = "simulated.call.app"
+        log("call simulated: \(engine.callAppName ?? "none")")
+        wait(5)
+        measure("in call, lower to 50% (gain 0.25)")
+        engine.setVolume(0.5, for: app.id)
+        wait(5)
+        measure("in call, volume 50% (gain 0.0625)")
+        engine.setVolume(1, for: app.id)
+        engine.setNeverLower(true, for: app.id)
+        wait(6)
+        measure("in call, excluded app: must leave Volumist")
+        engine.setNeverLower(false, for: app.id)
+        wait(5)
+        measure("in call, included again (gain 0.25)")
+        engine.simulatedCallApp = app.id
+        wait(8)
+        measure("the app itself is in the call: must leave Volumist")
+        engine.simulatedCallApp = "simulated.call.app"
+        wait(5)
+        measure("lowered again (gain 0.25)")
+        engine.simulatedCallApp = nil
+        wait(10)
+        measure("call ended: must leave Volumist")
+        engine.ducking = savedDucking
 
         // Routing: an idle output must become busy, and go idle again afterwards.
         func running(_ device: OutputDevice) -> Bool {
@@ -191,19 +222,21 @@ enum SelfTest {
     @MainActor
     static func renderPreview(to path: String) {
         _ = NSApplication.shared
-        func row(_ name: String, _ path: String, _ volume: Double, muted: Bool = false, output: String? = nil) -> AudioApp {
+        func row(_ name: String, _ path: String, _ volume: Double, muted: Bool = false, output: String? = nil,
+                 lowered: Bool = false, neverLower: Bool = false) -> AudioApp {
             // The bundle's own icon: NSWorkspace would return it tinted if the system icon style is.
             let file = Bundle(path: path)?.object(forInfoDictionaryKey: "CFBundleIconFile") as? String
             let icon = file.flatMap { NSImage(contentsOfFile: "\(path)/Contents/Resources/\(($0 as NSString).deletingPathExtension).icns") }
             return AudioApp(id: name, name: name, icon: icon ?? NSWorkspace.shared.icon(forFile: path), isPlaying: true,
-                     volume: volume, isMuted: muted, outputUID: output, outputName: output, outputMissing: false)
+                     volume: volume, isMuted: muted, outputUID: output, outputName: output, outputMissing: false,
+                            neverLower: neverLower, isLowered: lowered)
         }
         let engine = AudioEngine(preview: [
-            row("Spotify", "/Applications/Spotify.app", 0.45, output: "External Speakers"),
+            row("Spotify", "/Applications/Spotify.app", 0.8, output: "External Speakers", lowered: true),
             row("VLC", "/Applications/VLC.app", 1),
-            row("Zoom", "/Applications/zoom.us.app", 1.25),
+            row("Zoom", "/Applications/zoom.us.app", 1.25, neverLower: true),
             row("Discord", "/Applications/Discord.app", 0.8, muted: true),
-        ], output: "Headphones")
+        ], output: "Headphones", call: "Zoom")
 
         let view = NSHostingView(rootView: MixerView(engine: engine).background(Color(nsColor: .windowBackgroundColor)))
         view.appearance = NSAppearance(named: .aqua)

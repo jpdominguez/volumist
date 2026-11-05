@@ -29,6 +29,8 @@ your speakers while Zoom stays in your headphones.
 - **Per-app volume**, from 0% to 150%, with a soft limiter above 100% to avoid harsh clipping.
 - **Per-app mute** with one click.
 - **Per-app output routing**: send each app to a different speaker, monitor or pair of headphones.
+- **Automatic lowering during calls**: music fades down when a call starts and back up when it ends. Choose how far
+  it goes, what counts as a call, and which apps are left alone. Off by default.
 - **Automatic fallback**: if a chosen output disconnects, the app moves to the system output and returns when the
   device comes back.
 - **Remembers your settings** for each app.
@@ -80,6 +82,10 @@ Click the menu bar icon to see the apps that are playing audio, plus any app you
 | Slider | Sets the app's volume. It snaps to 100% so you can easily return to normal. |
 | Speaker button | Mutes or unmutes the app. |
 | Output menu | Picks the device for this app, or **System Output** to follow macOS. |
+| Lower other apps during calls | Turns automatic lowering on or off. |
+| Lower to | How far apps go down during a call, relative to their own volume. |
+| Detect calls from | **Any app using the microphone**, or **Known call apps only**. |
+| Lower in calls | Per-app checkbox, to leave an app out of automatic lowering. |
 | Reset | Returns every app to 100% on the system output. |
 | Open at login | Starts Volumist when you log in. |
 
@@ -92,6 +98,8 @@ Quitting Volumist returns every app to normal audio.
 - When an adjusted app starts playing there can be a fraction of a second of silence. This is deliberate: the
   alternative is a burst at full volume.
 - Volumes are per app, not per browser tab.
+- Calls are detected from microphone use, so a muted call still counts, and so does dictating or recording in another
+  app unless you switch to **Known call apps only**. A call in listen-only mode isn't detected.
 - Bluetooth headphones switch to a lower-quality mode whenever an app uses their microphone. That is a macOS
   behavior and it applies to the audio Volumist plays too.
 - Volumist uses two private system functions (see [the architecture notes](docs/ARCHITECTURE.md#private-apis)), so
@@ -115,6 +123,14 @@ Yes. Use the output menu under each app in Volumist.
 ### How do I lower Spotify or music without lowering my Zoom or Teams call?
 
 Lower the slider for the music app and leave the call app at 100%.
+
+### Can my Mac lower the music automatically when a call starts?
+
+Yes. Turn on **Lower other apps during calls** in Volumist. It detects calls from microphone use, fades down the
+other apps that are playing, and restores them when the call ends. The app in the call is never lowered.
+
+For browser calls such as Google Meet, keep **Any app using the microphone** selected: browsers are not in the list
+of known call apps, because they use the microphone for many other things.
 
 ### Does Volumist record my audio?
 

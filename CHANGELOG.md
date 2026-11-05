@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0
+
+- Lower other apps automatically during calls, with a configurable level.
+- Choose whether any app using the microphone counts as a call, or only known call apps.
+- Exclude individual apps from being lowered.
+
 ## 1.0.0
 
 First public release.

@@ -5,6 +5,9 @@ struct AppIdentity {
     let key: String
     let name: String
     let icon: NSImage?
+    /// True for apps the user launched, and their helpers. False for system services such as Siri's
+    /// listener, which hold the microphone without being in a call.
+    var isUserApp = false
 }
 
 /// Groups helper processes (Chrome tabs, Safari's WebKit…) under the app that created them.
@@ -17,7 +20,7 @@ enum AppResolver {
         for candidate in [responsible?(pid), pid].compactMap({ $0 }) where candidate > 0 {
             if let app = NSRunningApplication(processIdentifier: candidate),
                app.activationPolicy == .regular, let id = app.bundleIdentifier {
-                return AppIdentity(key: id, name: app.localizedName ?? id, icon: app.icon)
+                return AppIdentity(key: id, name: app.localizedName ?? id, icon: app.icon, isUserApp: true)
             }
         }
         if let path = executablePath(pid), let range = path.range(of: ".app/") {

@@ -8,7 +8,8 @@ typedef struct VMMixer VMMixer;
 
 VMMixer *vm_create(float initial_gain);
 void vm_destroy(VMMixer *mixer);
-void vm_set_gain(VMMixer *mixer, float gain);
+// `ramp` is the fraction of the remaining distance covered per sample: larger is faster.
+void vm_set_gain(VMMixer *mixer, float gain, float ramp);
 
 // IOProc: copies the tap's audio (last input buffer) to the output, applying the gain.
 OSStatus vm_ioproc(AudioObjectID device, const AudioTimeStamp *now,

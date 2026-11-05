@@ -57,6 +57,10 @@ struct MixerView: View {
 
             Divider()
 
+            callSection
+
+            Divider()
+
             HStack {
                 Toggle("Open at login", isOn: $engine.launchAtLogin)
                     .toggleStyle(.checkbox)
@@ -68,6 +72,33 @@ struct MixerView: View {
         }
         .padding(14)
         .frame(width: 340)
+    }
+
+    private var callSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Lower other apps during calls", isOn: $engine.ducking.isEnabled)
+                .toggleStyle(.checkbox)
+            if engine.ducking.isEnabled {
+                HStack {
+                    Text("Lower to").font(.caption).foregroundStyle(.secondary)
+                    Slider(value: $engine.ducking.level, in: 0...1)
+                        .controlSize(.small)
+                        .accessibilityLabel("Volume during calls")
+                    Text("\(Int((engine.ducking.level * 100).rounded()))%")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        .frame(width: 34, alignment: .trailing)
+                }
+                Picker("Detect calls from", selection: $engine.ducking.trigger) {
+                    ForEach(DuckingOptions.Trigger.allCases) { Text($0.title).tag($0) }
+                }
+                .font(.caption)
+                .controlSize(.small)
+                if let name = engine.callAppName {
+                    Label("Call detected in \(name)", systemImage: "phone.fill")
+                        .font(.caption).foregroundStyle(.green)
+                }
+            }
+        }
     }
 
     private var permissionNotice: some View {
@@ -105,7 +136,7 @@ struct AppRow: View {
                 HStack {
                     Text(app.name).lineLimit(1)
                     Spacer()
-                    Text(app.isMuted ? "Muted" : "\(Int((app.volume * 100).rounded()))%")
+                    Text(statusText)
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 Slider(value: Binding(get: { app.isMuted ? 0 : app.volume },
@@ -113,7 +144,18 @@ struct AppRow: View {
                        in: 0...AudioEngine.maxVolume)
                     .controlSize(.small)
                     .accessibilityLabel("Volume of \(app.name)")
-                outputMenu
+                HStack {
+                    outputMenu
+                    Spacer()
+                    if engine.ducking.isEnabled {
+                        Toggle("Lower in calls", isOn: Binding(get: { !app.neverLower },
+                                                               set: { engine.setNeverLower(!$0, for: app.id) }))
+                            .toggleStyle(.checkbox)
+                            .controlSize(.small)
+                            .font(.caption)
+                            .accessibilityLabel("Lower \(app.name) during calls")
+                    }
+                }
             }
 
             Button { engine.toggleMute(for: app.id) } label: {
@@ -125,6 +167,12 @@ struct AppRow: View {
             .accessibilityLabel(app.isMuted ? "Unmute \(app.name)" : "Mute \(app.name)")
         }
         .disabled(!enabled)
+    }
+
+    private var statusText: String {
+        if app.isMuted { return "Muted" }
+        let volume = "\(Int((app.volume * 100).rounded()))%"
+        return app.isLowered ? "\(volume) · lowered" : volume
     }
 
     private var outputMenu: some View {
