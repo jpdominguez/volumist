@@ -17,6 +17,12 @@
 </p>
 
 <p align="center">
+  <a href="https://alternativeto.net/software/volumist/about/?utm_source=badge&utm_medium=referral">
+    <img src="docs/alternativeto-badge.svg" width="150" alt="Volumist | AlternativeTo">
+  </a>
+</p>
+
+<p align="center">
   <img src="docs/demo.gif" width="480" alt="Animated demo of Volumist: Spotify and VLC lower themselves when a Zoom call starts, return when it ends, and Spotify's balance, leveling and equalizer are adjusted">
   <br><sub>The real interface, animated with sample data.</sub>
 </p>
