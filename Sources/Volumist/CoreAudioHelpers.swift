@@ -1,3 +1,4 @@
+import AudioToolbox
 import CoreAudio
 import Foundation
 
@@ -46,6 +47,28 @@ func defaultOutputDevice() -> AudioObjectID? {
     let id = readValue(AudioObjectID(kAudioObjectSystemObject),
                        kAudioHardwarePropertyDefaultOutputDevice, as: AudioObjectID(0))
     return id == 0 ? nil : id
+}
+
+/// The same volume as the Mac's keyboard keys. Nil for outputs without one, such as many HDMI monitors.
+func readSystemVolume(_ device: AudioObjectID) -> Double? {
+    var addr = systemVolumeAddress
+    guard AudioObjectHasProperty(device, &addr) else { return nil }
+    var settable = DarwinBoolean(false)
+    guard AudioObjectIsPropertySettable(device, &addr, &settable) == noErr, settable.boolValue else { return nil }
+    var volume = Float32(0)
+    var size = UInt32(MemoryLayout<Float32>.size)
+    guard AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &volume) == noErr else { return nil }
+    return Double(volume)
+}
+
+func writeSystemVolume(_ volume: Double, device: AudioObjectID) {
+    var addr = systemVolumeAddress
+    var value = Float32(volume)
+    AudioObjectSetPropertyData(device, &addr, 0, nil, UInt32(MemoryLayout<Float32>.size), &value)
+}
+
+var systemVolumeAddress: AudioObjectPropertyAddress {
+    address(kAudioHardwareServiceDeviceProperty_VirtualMainVolume, scope: kAudioObjectPropertyScopeOutput)
 }
 
 struct OutputDevice: Identifiable, Equatable {

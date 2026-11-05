@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0
+
+- Automatic leveling for each app, to even out loud and quiet parts.
+- 10-band equalizer for each app, with presets.
+- Left/right balance for each app.
+- Level meters, active only while the Volumist window is open.
+- System volume slider.
+- Optional update check, off by default.
+- The window now stays anchored to the menu bar and the app list scrolls when it doesn't fit.
+- Apps are always listed alphabetically.
+- Reset a single app from its details, close the window with Escape or by clicking elsewhere.
+- System sounds are listed as System Sounds.
+- Fixed muting having no effect the first time on an app with default settings.
+
 ## 1.1.0
 
 - Lower other apps automatically during calls, with a configurable level.

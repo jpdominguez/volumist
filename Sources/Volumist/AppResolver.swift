@@ -30,7 +30,8 @@ enum AppResolver {
             return AppIdentity(key: bundle?.bundleIdentifier ?? bundlePath, name: name,
                                icon: NSWorkspace.shared.icon(forFile: bundlePath))
         }
-        let name = executablePath(pid).map { ($0 as NSString).lastPathComponent } ?? bundleID ?? "Process \(pid)"
+        var name = executablePath(pid).map { ($0 as NSString).lastPathComponent } ?? bundleID ?? "Process \(pid)"
+        if name == "systemsoundserverd" { name = "System Sounds" }
         return AppIdentity(key: bundleID.flatMap { $0.isEmpty ? nil : $0 } ?? name, name: name, icon: nil)
     }
 

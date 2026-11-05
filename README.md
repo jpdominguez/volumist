@@ -28,6 +28,11 @@ your speakers while Zoom stays in your headphones.
 
 - **Per-app volume**, from 0% to 150%, with a soft limiter above 100% to avoid harsh clipping.
 - **Per-app mute** with one click.
+- **Per-app leveling**: evens out loud and quiet parts, so ads and explosions stop making you jump.
+- **Per-app equalizer**: 10 bands from 31 Hz to 16 kHz, with presets such as Bass Boost and Voice.
+- **Per-app balance** between left and right.
+- **Level meters** that show what each app is playing.
+- **System volume slider**, so everything is in one place.
 - **Per-app output routing**: send each app to a different speaker, monitor or pair of headphones.
 - **Automatic lowering during calls**: music fades down when a call starts and back up when it ends. Choose how far
   it goes, what counts as a call, and which apps are left alone. Off by default.
@@ -36,9 +41,10 @@ your speakers while Zoom stays in your headphones.
 - **Remembers your settings** for each app.
 - **Groups helper processes**, so a browser appears as one row rather than one per process.
 - **No audio driver, kernel extension or virtual device.** Volumist uses Apple's Core Audio process taps.
-- **Stays out of the way**: apps at 100% on the system output don't pass through Volumist at all.
-- **Private**: no network access, no analytics, and audio is never recorded or stored.
-- **Tiny**: a native Swift and C app of about 2 MB, with no dependencies.
+- **Stays out of the way**: apps with default settings don't pass through Volumist at all.
+- **Private**: no analytics, and audio is never recorded or stored. The only network request is the optional update
+  check, which is off by default.
+- **Tiny**: a native Swift and C app of about 3 MB, with no dependencies.
 
 ## Requirements
 
@@ -80,16 +86,21 @@ Click the menu bar icon to see the apps that are playing audio, plus any app you
 | Control | What it does |
 | --- | --- |
 | Slider | Sets the app's volume. It snaps to 100% so you can easily return to normal. |
+| Level meter | Shows the app's level while the window is open. |
 | Speaker button | Mutes or unmutes the app. |
+| Sliders button | Opens the app's balance, leveling and equalizer. |
 | Output menu | Picks the device for this app, or **System Output** to follow macOS. |
+| Top slider | Sets the Mac's volume, the same as the keyboard keys. It is hidden for outputs with no volume control. |
 | Lower other apps during calls | Turns automatic lowering on or off. |
 | Lower to | How far apps go down during a call, relative to their own volume. |
 | Detect calls from | **Any app using the microphone**, or **Known call apps only**. |
 | Lower in calls | Per-app checkbox, to leave an app out of automatic lowering. |
-| Reset | Returns every app to 100% on the system output. |
+| Check for updates | Looks for a new release at launch and once a day, and shows a link if there is one. |
+| Reset *App* | In the app's details, returns that app to its defaults. |
+| Reset | Returns every app to its defaults. |
 | Open at login | Starts Volumist when you log in. |
 
-Quitting Volumist returns every app to normal audio.
+To close the window, click anywhere else or press Escape. Quitting Volumist returns every app to normal audio.
 
 ## Limitations
 
@@ -98,6 +109,8 @@ Quitting Volumist returns every app to normal audio.
 - When an adjusted app starts playing there can be a fraction of a second of silence. This is deliberate: the
   alternative is a burst at full volume.
 - Volumes are per app, not per browser tab.
+- Balance has no effect on mono outputs, such as Bluetooth headphones while their microphone is in use.
+- The 16 kHz equalizer band is skipped on outputs with a low sample rate, such as that same Bluetooth mode.
 - Calls are detected from microphone use, so a muted call still counts, and so does dictating or recording in another
   app unless you switch to **Known call apps only**. A call in listen-only mode isn't detected.
 - Bluetooth headphones switch to a lower-quality mode whenever an app uses their microphone. That is a macOS
@@ -132,11 +145,25 @@ other apps that are playing, and restores them when the call ends. The app in th
 For browser calls such as Google Meet, keep **Any app using the microphone** selected: browsers are not in the list
 of known call apps, because they use the microphone for many other things.
 
+### How do I stop ads or videos being louder than everything else on a Mac?
+
+Open the app's details in Volumist and turn on **Level loud and quiet parts**. It lowers loud passages quickly, by up
+to 12 dB, and raises quiet ones slowly, by up to 9 dB.
+
+### Can I use a different equalizer for each app on a Mac?
+
+Yes. Click the sliders button next to an app in Volumist to open its 10-band equalizer.
+
 ### Does Volumist record my audio?
 
 No. macOS labels the permission "audio capture" because Volumist has to read an app's audio in order to change its
 volume. The audio is processed in memory, in real time, and goes straight to the output device. Volumist never
 writes it to disk or sends it anywhere, and you can verify that in the source code.
+
+### Does Volumist connect to the internet?
+
+Only if you turn on **Check for updates**. It then asks GitHub for the latest release, and sends no data about you or
+your Mac beyond what any web request does. Updates are never installed automatically.
 
 ### Why does macOS say the app can't be verified?
 
@@ -158,8 +185,8 @@ defaults delete io.github.jpdominguez.volumist
 
 ## Alternatives
 
-If Volumist doesn't fit your needs, you may prefer [FineTune](https://github.com/ronitsingh10/FineTune), which adds
-an equalizer, [Background Music](https://github.com/kyleneideck/BackgroundMusic), or the commercial
+If Volumist doesn't fit your needs, you may prefer [FineTune](https://github.com/ronitsingh10/FineTune),
+[Background Music](https://github.com/kyleneideck/BackgroundMusic), or the commercial
 [SoundSource](https://rogueamoeba.com/soundsource/).
 
 ## Contributing

@@ -15,8 +15,14 @@ final class TapSession {
 
     /// The device it is playing through right now, or nil while the I/O is stopped.
     private(set) var outputUID: String?
+    private(set) var hasStarted = false
 
-    init(processes: [AudioObjectID], gain: Float) throws {
+    private var equalizer = [Float](repeating: 0, count: Int(VM_EQ_BANDS))
+    private var sampleRate = 48_000.0
+    private var levels = false
+
+    init(processes: [AudioObjectID], gain: Float, balance: Float = 0, equalizer: [Float]? = nil,
+         leveler: Bool = false) throws {
         self.processes = processes
         description = CATapDescription(stereoMixdownOfProcesses: processes)
         description.name = "Volumist"
@@ -30,6 +36,9 @@ final class TapSession {
         tapID = id
         tapUID = description.uuid.uuidString
         mixer = vm_create(gain)
+        setBalance(balance)
+        if let equalizer { setEqualizer(equalizer) }
+        setLeveler(leveler)
     }
 
     deinit {
@@ -41,6 +50,21 @@ final class TapSession {
     /// `fade` takes about a second, for automatic changes. Otherwise it takes ~10 ms at 48 kHz,
     /// fast enough to follow a slider without clicks.
     func setGain(_ gain: Float, fade: Bool = false) { vm_set_gain(mixer, gain, fade ? 0.00005 : 0.002) }
+
+    func setBalance(_ balance: Float) { vm_set_balance(mixer, balance) }
+
+    func setEqualizer(_ gains: [Float]) {
+        equalizer = gains
+        vm_set_eq(mixer, gains, sampleRate)
+    }
+
+    func setLeveler(_ enabled: Bool) {
+        levels = enabled
+        vm_set_leveler(mixer, enabled ? 1 : 0, sampleRate)
+    }
+
+    /// The peak level since the last call, as heard: after gain and limiting.
+    func takePeak() -> Float { vm_take_peak(mixer) }
 
     /// Adds or removes processes without interrupting the audio (e.g. a new browser helper).
     func update(processes new: [AudioObjectID]) throws {
@@ -73,6 +97,11 @@ final class TapSession {
         var status = AudioHardwareCreateAggregateDevice(config as CFDictionary, &aggregateID)
         guard status == noErr else { throw AudioError("Could not create the aggregate device", status) }
 
+        // The filters are designed for one sample rate, and each output can have its own.
+        sampleRate = readValue(aggregateID, kAudioDevicePropertyNominalSampleRate, as: Float64(0)) ?? sampleRate
+        setEqualizer(equalizer)
+        setLeveler(levels)
+
         var proc: AudioDeviceIOProcID?
         status = AudioDeviceCreateIOProcID(aggregateID, vm_ioproc, UnsafeMutableRawPointer(mixer), &proc)
         guard status == noErr, let proc else {
@@ -86,6 +115,7 @@ final class TapSession {
             throw AudioError("Could not start audio", status)
         }
         self.outputUID = outputUID
+        hasStarted = true
     }
 
     func stop() {

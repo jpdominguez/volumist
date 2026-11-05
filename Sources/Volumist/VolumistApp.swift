@@ -8,22 +8,85 @@ enum Entry {
             SelfTest.run(arguments: Array(CommandLine.arguments[(index + 1)...]))
         } else if let index = CommandLine.arguments.firstIndex(of: "--render-preview") {
             MainActor.assumeIsolated { SelfTest.renderPreview(to: CommandLine.arguments[index + 1]) }
+        } else if let index = CommandLine.arguments.firstIndex(of: "--ui-check") {
+            MainActor.assumeIsolated { SelfTest.checkExpansion(log: CommandLine.arguments[index + 1]) }
         } else if let index = CommandLine.arguments.firstIndex(of: "--check") {
             MainActor.assumeIsolated { SelfTest.check(directory: CommandLine.arguments[index + 1]) }
         } else {
-            VolumistApp.main()
+            MainActor.assumeIsolated {
+                let application = NSApplication.shared
+                let controller = AppController(engine: AudioEngine())
+                application.delegate = controller
+                application.run()
+            }
         }
     }
 }
 
-struct VolumistApp: App {
-    @StateObject private var engine = AudioEngine()
+/// Owns the menu bar item. A popover stays anchored to it while its content changes size,
+/// which a SwiftUI MenuBarExtra window doesn't do.
+@MainActor
+final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+    let engine: AudioEngine
+    let popover = NSPopover()
+    private var statusItem: NSStatusItem?
+    private var outsideClickMonitor: Any?
+    private var escapeMonitor: Any?
 
-    var body: some Scene {
-        MenuBarExtra("Volumist", systemImage: "slider.vertical.3") {
-            MixerView(engine: engine)
+    init(engine: AudioEngine) {
+        self.engine = engine
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        install()
+    }
+
+    func install() {
+        let host = NSHostingController(rootView: MixerView(engine: engine))
+        host.sizingOptions = .preferredContentSize
+        popover.contentViewController = host
+        popover.behavior = .transient
+        popover.animates = false
+        popover.delegate = self
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = NSImage(systemSymbolName: "slider.vertical.3", accessibilityDescription: "Volumist")
+        item.button?.target = self
+        item.button?.action = #selector(toggle)
+        statusItem = item
+    }
+
+    @objc func toggle() {
+        if popover.isShown {
+            popover.performClose(nil)
+        } else if let button = statusItem?.button {
+            // Active from the start, so that the first click inside doesn't have to activate it.
+            NSApp.activate(ignoringOtherApps: true)
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
         }
-        .menuBarExtraStyle(.window)
+    }
+
+    func popoverDidShow(_ notification: Notification) {
+        engine.setWindowOpen(true)
+        // A transient popover only closes by itself if macOS made Volumist the active app, which
+        // doesn't always happen. This monitor sees clicks in other apps, and never clicks in Volumist.
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event } // Escape
+            MainActor.assumeIsolated { self?.popover.performClose(nil) }
+            return nil
+        }
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            MainActor.assumeIsolated { self?.popover.performClose(nil) }
+        }
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        engine.setWindowOpen(false)
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+        outsideClickMonitor = nil
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        escapeMonitor = nil
     }
 }
 
@@ -39,6 +102,17 @@ struct MixerView: View {
                 Spacer()
             }
 
+            if let volume = engine.systemVolume {
+                HStack(spacing: 8) {
+                    Image(systemName: "speaker.fill").font(.caption).foregroundStyle(.secondary)
+                    Slider(value: Binding(get: { volume }, set: { engine.setSystemVolume($0) }), in: 0...1)
+                        .controlSize(.small)
+                        .accessibilityLabel("System volume")
+                    Image(systemName: "speaker.wave.3.fill").font(.caption).foregroundStyle(.secondary)
+                }
+                Divider()
+            }
+
             if engine.permission != .granted { permissionNotice }
 
             if engine.apps.isEmpty {
@@ -46,8 +120,15 @@ struct MixerView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 64)
             } else {
-                ForEach(engine.apps) { app in
-                    AppRow(app: app, engine: engine, enabled: engine.permission == .granted)
+                appList
+            }
+
+            if let update = engine.availableUpdate {
+                HStack {
+                    Label("Volumist \(update.version) is available", systemImage: "arrow.down.circle")
+                        .font(.caption)
+                    Spacer()
+                    Link("Download", destination: update.htmlUrl).font(.caption)
                 }
             }
 
@@ -61,6 +142,10 @@ struct MixerView: View {
 
             Divider()
 
+            Toggle("Check for updates", isOn: $engine.checksForUpdates)
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+
             HStack {
                 Toggle("Open at login", isOn: $engine.launchAtLogin)
                     .toggleStyle(.checkbox)
@@ -71,7 +156,28 @@ struct MixerView: View {
             .controlSize(.small)
         }
         .padding(14)
-        .frame(width: 340)
+        .frame(width: 360)
+    }
+
+    /// Scrolls when the apps don't fit. A ScrollView has no size of its own, so it takes the
+    /// height of its content, up to what the screen leaves free.
+    private var appList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(engine.apps) { app in
+                    AppRow(app: app, engine: engine, enabled: engine.permission == .granted)
+                }
+            }
+            .background(GeometryReader { Color.clear.preference(key: ListHeight.self, value: $0.size.height) })
+        }
+        .frame(height: min(engine.listHeight, maxListHeight))
+        .onPreferenceChange(ListHeight.self) { height in
+            MainActor.assumeIsolated { engine.listHeight = height }
+        }
+    }
+
+    private var maxListHeight: CGFloat {
+        max((NSScreen.main?.visibleFrame.height ?? 800) - 340, 200)
     }
 
     private var callSection: some View {
@@ -88,11 +194,16 @@ struct MixerView: View {
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                         .frame(width: 34, alignment: .trailing)
                 }
-                Picker("Detect calls from", selection: $engine.ducking.trigger) {
-                    ForEach(DuckingOptions.Trigger.allCases) { Text($0.title).tag($0) }
+                HStack {
+                    Text("Detect calls from").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Dropdown(title: engine.ducking.trigger.title, items: DuckingOptions.Trigger.allCases.map { trigger in
+                        DropdownItem(title: trigger.title, isSelected: trigger == engine.ducking.trigger) {
+                            engine.ducking.trigger = trigger
+                        }
+                    }, accessibilityLabel: "Detect calls from")
+                    .fixedSize()
                 }
-                .font(.caption)
-                .controlSize(.small)
                 if let name = engine.callAppName {
                     Label("Call detected in \(name)", systemImage: "phone.fill")
                         .font(.caption).foregroundStyle(.green)
@@ -117,10 +228,21 @@ struct MixerView: View {
 
 struct AppRow: View {
     let app: AudioApp
-    let engine: AudioEngine
+    // Must be observed: the row reads engine state that isn't in `app`, and SwiftUI skips redrawing
+    // a child whose stored properties look unchanged.
+    @ObservedObject var engine: AudioEngine
     let enabled: Bool
 
+    private var isExpanded: Bool { engine.expandedApp == app.id }
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            row
+            if isExpanded { AppDetails(app: app, engine: engine).disabled(!enabled) }
+        }
+    }
+
+    private var row: some View {
         HStack(spacing: 10) {
             Group {
                 if let icon = app.icon {
@@ -144,8 +266,9 @@ struct AppRow: View {
                        in: 0...AudioEngine.maxVolume)
                     .controlSize(.small)
                     .accessibilityLabel("Volume of \(app.name)")
+                LevelMeter(store: engine.levels, id: app.id)
                 HStack {
-                    outputMenu
+                    outputDropdown
                     Spacer()
                     if engine.ducking.isEnabled {
                         Toggle("Lower in calls", isOn: Binding(get: { !app.neverLower },
@@ -158,16 +281,30 @@ struct AppRow: View {
                 }
             }
 
-            Button { engine.toggleMute(for: app.id) } label: {
-                Image(systemName: app.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .frame(width: 20)
-                    .foregroundStyle(app.isMuted ? Color.red : Color.secondary)
+            VStack(spacing: 4) {
+                Button { engine.toggleMute(for: app.id) } label: {
+                    Image(systemName: app.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .frame(width: 24, height: 22)
+                        .foregroundStyle(app.isMuted ? Color.red : Color.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(app.isMuted ? "Unmute \(app.name)" : "Mute \(app.name)")
+
+                Button { engine.expandedApp = isExpanded ? nil : app.id } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .frame(width: 24, height: 22)
+                        .foregroundStyle(isExpanded || isCustomized ? Color.accentColor : Color.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Balance and equalizer of \(app.name)")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(app.isMuted ? "Unmute \(app.name)" : "Mute \(app.name)")
         }
         .disabled(!enabled)
     }
+
+    private var isCustomized: Bool { app.balance != 0 || app.equalizer != Equalizer.flat || app.levelsVolume }
 
     private var statusText: String {
         if app.isMuted { return "Muted" }
@@ -175,20 +312,19 @@ struct AppRow: View {
         return app.isLowered ? "\(volume) · lowered" : volume
     }
 
-    private var outputMenu: some View {
-        Menu {
-            Button("System Output (\(engine.outputName))") { engine.setOutput(nil, for: app.id) }
-            Divider()
-            ForEach(engine.devices) { device in
-                Button(device.name) { engine.setOutput(device.id, name: device.name, for: app.id) }
-            }
-        } label: {
-            Text(outputLabel).font(.caption).lineLimit(1)
+    private var outputDropdown: some View {
+        var items = [DropdownItem(title: "System Output (\(engine.outputName))", isSelected: app.outputUID == nil) {
+            engine.setOutput(nil, for: app.id)
+        }]
+        for (index, device) in engine.devices.enumerated() {
+            items.append(DropdownItem(title: device.name, isSelected: app.outputUID == device.id,
+                                      isSeparatorBefore: index == 0) {
+                engine.setOutput(device.id, name: device.name, for: app.id)
+            })
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .foregroundStyle(app.outputMissing ? Color.orange : Color.secondary)
-        .accessibilityLabel("Output of \(app.name)")
+        return Dropdown(title: outputLabel, items: items, color: app.outputMissing ? .systemOrange : .labelColor,
+                        accessibilityLabel: "Output of \(app.name)")
+            .fixedSize()
     }
 
     private var outputLabel: String {
@@ -199,4 +335,128 @@ struct AppRow: View {
 
     /// Makes it easy to land exactly on 100 %, the value at which an app leaves Volumist.
     private func snap(_ value: Double) -> Double { abs(value - 1) < 0.03 ? 1 : value }
+}
+
+struct ListHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+struct LevelMeter: View {
+    @ObservedObject var store: LevelStore
+    let id: String
+
+    /// The last 60 dB, so that quiet audio still moves the bar.
+    private var fraction: CGFloat {
+        let level = store.levels[id] ?? 0
+        guard level > 0 else { return 0 }
+        return CGFloat(min(max(1 + 20 * log10(level) / 60, 0), 1))
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.quaternary)
+                Capsule().fill(Color.green.opacity(0.8)).frame(width: geometry.size.width * fraction)
+            }
+        }
+        .frame(height: 3)
+        .accessibilityHidden(true)
+    }
+}
+
+struct AppDetails: View {
+    let app: AudioApp
+    @ObservedObject var engine: AudioEngine
+
+    private var presetName: String {
+        Equalizer.presets.first { $0.gains == app.equalizer }?.name ?? "Custom"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("Balance").font(.caption).foregroundStyle(.secondary)
+                Text("L").font(.caption2).foregroundStyle(.secondary)
+                Slider(value: Binding(get: { app.balance },
+                                      set: { engine.setBalance(abs($0) < 0.05 ? 0 : $0, for: app.id) }),
+                       in: -1...1)
+                    .controlSize(.small)
+                    .accessibilityLabel("Balance of \(app.name)")
+                Text("R").font(.caption2).foregroundStyle(.secondary)
+            }
+
+            Toggle("Level loud and quiet parts", isOn: Binding(get: { app.levelsVolume },
+                                                               set: { engine.setLevelsVolume($0, for: app.id) }))
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+                .font(.caption)
+                .accessibilityLabel("Level loud and quiet parts of \(app.name)")
+
+            HStack {
+                Text("Equalizer").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Dropdown(title: presetName, items: Equalizer.presets.map { preset in
+                    DropdownItem(title: preset.name, isSelected: preset.gains == app.equalizer) {
+                        engine.setEqualizer(preset.gains, for: app.id)
+                    }
+                }, accessibilityLabel: "Equalizer preset of \(app.name)")
+                .fixedSize()
+            }
+
+            HStack(alignment: .top, spacing: 2) {
+                ForEach(0..<Equalizer.bandCount, id: \.self) { band in
+                    EQBand(gain: app.equalizer[band], label: Equalizer.labels[band]) {
+                        engine.setBand(band, gain: $0, for: app.id)
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("Reset \(app.name)") { engine.reset(app.id) }
+                    .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct EQBand: View {
+    let gain: Double
+    let label: String
+    let changed: (Double) -> Void
+
+    var body: some View {
+        VStack(spacing: 3) {
+            GeometryReader { geometry in
+                let height = geometry.size.height
+                let range = Equalizer.range
+                let knob = height * (range.upperBound - gain) / (range.upperBound - range.lowerBound)
+                ZStack {
+                    Capsule().fill(.quaternary).frame(width: 3)
+                    Rectangle().fill(.tertiary).frame(height: 1).position(x: geometry.size.width / 2, y: height / 2)
+                    Circle().fill(Color.accentColor).frame(width: 10, height: 10)
+                        .position(x: geometry.size.width / 2, y: knob)
+                }
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                    let position = min(max(value.location.y / height, 0), 1)
+                    let raw = range.upperBound - position * (range.upperBound - range.lowerBound)
+                    let rounded = (raw * 2).rounded() / 2
+                    changed(abs(rounded) < 1 ? 0 : rounded) // snaps to flat
+                })
+            }
+            .frame(height: 70)
+            Text(label).font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement()
+        .accessibilityLabel("\(label) hertz")
+        .accessibilityValue("\(gain, specifier: "%.1f") decibels")
+        .accessibilityAdjustableAction { direction in
+            changed(min(max(gain + (direction == .increment ? 1 : -1), Equalizer.range.lowerBound), Equalizer.range.upperBound))
+        }
+    }
 }

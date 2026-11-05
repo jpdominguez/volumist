@@ -7,41 +7,6 @@ import SwiftUI
 /// Diagnostics: `Volumist --selftest <pid> <log-file>`. Uses independent taps to measure the audio
 /// emitted by process `pid` and the audio leaving Volumist, verifying the gain end to end.
 enum SelfTest {
-    final class Meter {
-        let tap: AudioObjectID
-        var aggregate = AudioObjectID(0)
-        var proc: AudioDeviceIOProcID?
-        let meter = vm_meter_create()
-
-        init(process: AudioObjectID, output: AudioObjectID) throws {
-            let desc = CATapDescription(stereoMixdownOfProcesses: [process])
-            desc.uuid = UUID(); desc.isPrivate = true; desc.muteBehavior = .unmuted
-            var id = AudioObjectID(0)
-            var status = AudioHardwareCreateProcessTap(desc, &id)
-            guard status == noErr else { throw AudioError("tap", status) }
-            tap = id
-            let uid = readString(output, kAudioDevicePropertyDeviceUID)!
-            let config: [String: Any] = [
-                kAudioAggregateDeviceNameKey: "Volumist Meter",
-                kAudioAggregateDeviceUIDKey: "volumist-meter.\(UUID().uuidString)",
-                kAudioAggregateDeviceMainSubDeviceKey: uid,
-                kAudioAggregateDeviceIsPrivateKey: true,
-                kAudioAggregateDeviceTapAutoStartKey: true,
-                kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: uid]],
-                kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: desc.uuid.uuidString,
-                                                   kAudioSubTapDriftCompensationKey: true]],
-            ]
-            status = AudioHardwareCreateAggregateDevice(config as CFDictionary, &aggregate)
-            guard status == noErr else { throw AudioError("aggregate", status) }
-            status = AudioDeviceCreateIOProcID(aggregate, vm_meter_ioproc, UnsafeMutableRawPointer(meter), &proc)
-            guard status == noErr else { throw AudioError("ioproc", status) }
-            status = AudioDeviceStart(aggregate, proc)
-            guard status == noErr else { throw AudioError("start", status) }
-        }
-
-        func rms() -> Float { vm_meter_take_rms(meter) }
-    }
-
     static func run(arguments: [String]) {
         guard arguments.count == 2, let target = pid_t(arguments[0]) else { exit(2) }
         let logURL = URL(fileURLWithPath: arguments[1])
@@ -81,15 +46,16 @@ enum SelfTest {
             try session.start(outputUID: readString(output, kAudioDevicePropertyDeviceUID)!)
             let mine = processObject(ProcessInfo.processInfo.processIdentifier)
             guard mine != 0 else { throw AudioError("Volumist is not listed as an audio process", -1) }
-            let sourceMeter = try Meter(process: source, output: output)
-            let mineMeter = try Meter(process: mine, output: output)
+            let uid = readString(output, kAudioDevicePropertyDeviceUID)!
+            let sourceMeter = try MeterTap(processes: [source], outputUID: uid)
+            let mineMeter = try MeterTap(processes: [mine], outputUID: uid)
 
             for gain: Float in [1, 0.25, 0.5, 0, 1] {
                 session.setGain(gain)
                 Thread.sleep(forTimeInterval: 1)
-                _ = sourceMeter.rms(); _ = mineMeter.rms()
+                _ = sourceMeter.take(); _ = mineMeter.take()
                 Thread.sleep(forTimeInterval: 1.5)
-                let a = sourceMeter.rms(), b = mineMeter.rms()
+                let a = sourceMeter.take().rms, b = mineMeter.take().rms
                 log(String(format: "gain %.2f  source %.5f  output %.5f  ratio %.3f", gain, a, b, a > 0 ? b / a : -1))
             }
             log("done")
@@ -140,12 +106,15 @@ enum SelfTest {
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr,
                                    UInt32(MemoryLayout<pid_t>.size), &pid, &size, &mine)
-        guard mine != 0, let meter = try? Meter(process: mine, output: output) else {
+        guard mine != 0, let outputUID = readString(output, kAudioDevicePropertyDeviceUID),
+              let meter = try? MeterTap(processes: [mine], outputUID: outputUID) else {
             fail("no meter, engine error: \(engine.lastError ?? "-")")
         }
         func measure(_ label: String) {
-            wait(1); _ = meter.rms(); wait(1.5)
-            log(String(format: "%@: output %.5f  error: %@  apps: %@", label, meter.rms(), engine.lastError ?? "-", state()))
+            wait(1); _ = meter.take(); wait(1.5)
+            let reading = meter.take()
+            log(String(format: "%@: output %.5f  left %.5f  right %.5f  error: %@  apps: %@", label, reading.rms,
+                       reading.left, reading.right, engine.lastError ?? "-", state()))
         }
         measure("volume 50% (gain 0.25)")
         engine.setVolume(1.2, for: app.id)
@@ -191,6 +160,65 @@ enum SelfTest {
         measure("call ended: must leave Volumist")
         engine.ducking = savedDucking
 
+        // Balance and equalizer, which also make an app at 100% go through Volumist.
+        engine.setBalance(1, for: app.id)
+        wait(2)
+        measure("balance fully right")
+        engine.setBalance(-0.5, for: app.id)
+        measure("balance half left")
+        engine.setBalance(0, for: app.id)
+        var gains = Equalizer.flat
+        gains[4] = 12 // 500 Hz, next to the 440 Hz tone
+        engine.setEqualizer(gains, for: app.id)
+        measure("EQ +12 dB at 500 Hz")
+        gains = Equalizer.flat
+        gains[9] = 12 // 16 kHz, far from the tone
+        engine.setEqualizer(gains, for: app.id)
+        measure("EQ +12 dB at 16 kHz")
+        gains = Equalizer.flat
+        gains[4] = -12
+        engine.setEqualizer(gains, for: app.id)
+        measure("EQ -12 dB at 500 Hz")
+        engine.setEqualizer(Equalizer.flat, for: app.id)
+        wait(6)
+        measure("EQ flat: must leave Volumist")
+
+        // Leveler: this quiet tone (-29 dBFS) should rise by its maximum of 9 dB.
+        engine.setLevelsVolume(true, for: app.id)
+        wait(15)
+        measure("leveler on a quiet tone (+9 dB)")
+        engine.setLevelsVolume(false, for: app.id)
+        wait(6)
+        measure("leveler off: must leave Volumist")
+
+        // Resetting one app clears everything at once.
+        engine.setVolume(0.5, for: app.id)
+        engine.setBalance(0.5, for: app.id)
+        engine.setLevelsVolume(true, for: app.id)
+        wait(2)
+        engine.reset(app.id)
+        wait(6)
+        measure("reset app: must leave Volumist")
+
+        // Meters: they only run with the window open, and must not touch the audio path.
+        engine.setWindowOpen(true)
+        wait(2)
+        log(String(format: "meter at 100%%: %.4f", engine.levels.levels[app.id] ?? -1))
+        measure("meter open: must not go through Volumist")
+        engine.setVolume(0.5, for: app.id)
+        wait(2)
+        log(String(format: "meter at 50%% (gain 0.25): %.4f", engine.levels.levels[app.id] ?? -1))
+        engine.setVolume(1, for: app.id)
+        engine.setWindowOpen(false)
+        wait(5)
+
+        // Update check.
+        log("update comparison: \(UpdateChecker.isNewer("1.10.0", than: "1.9.0")) \(UpdateChecker.isNewer("1.1.0", than: "1.2.0")) \(UpdateChecker.isNewer("1.2.0", than: "1.2.0"))")
+        var latest: UpdateChecker.Release?
+        Task { latest = try? await UpdateChecker.latestRelease() }
+        for _ in 0..<50 where latest == nil { wait(0.2) }
+        log("latest release: \(latest?.version ?? "unavailable") at \(latest?.htmlUrl.absoluteString ?? "-")  running: \(UpdateChecker.currentVersion)")
+
         // Routing: an idle output must become busy, and go idle again afterwards.
         func running(_ device: OutputDevice) -> Bool {
             readValue(device.object, kAudioDevicePropertyDeviceIsRunningSomewhere, as: UInt32(0)) == 1
@@ -223,20 +251,23 @@ enum SelfTest {
     static func renderPreview(to path: String) {
         _ = NSApplication.shared
         func row(_ name: String, _ path: String, _ volume: Double, muted: Bool = false, output: String? = nil,
-                 lowered: Bool = false, neverLower: Bool = false) -> AudioApp {
+                 lowered: Bool = false, neverLower: Bool = false, equalizer: [Double] = Equalizer.flat,
+                 balance: Double = 0) -> AudioApp {
             // The bundle's own icon: NSWorkspace would return it tinted if the system icon style is.
             let file = Bundle(path: path)?.object(forInfoDictionaryKey: "CFBundleIconFile") as? String
             let icon = file.flatMap { NSImage(contentsOfFile: "\(path)/Contents/Resources/\(($0 as NSString).deletingPathExtension).icns") }
             return AudioApp(id: name, name: name, icon: icon ?? NSWorkspace.shared.icon(forFile: path), isPlaying: true,
                      volume: volume, isMuted: muted, outputUID: output, outputName: output, outputMissing: false,
-                            neverLower: neverLower, isLowered: lowered)
+                            neverLower: neverLower, isLowered: lowered, balance: balance, equalizer: equalizer)
         }
         let engine = AudioEngine(preview: [
-            row("Spotify", "/Applications/Spotify.app", 0.8, output: "External Speakers", lowered: true),
+            row("Spotify", "/Applications/Spotify.app", 0.8, output: "External Speakers", lowered: true,
+                equalizer: Equalizer.presets[1].gains, balance: -0.2),
             row("VLC", "/Applications/VLC.app", 1),
             row("Zoom", "/Applications/zoom.us.app", 1.25, neverLower: true),
             row("Discord", "/Applications/Discord.app", 0.8, muted: true),
-        ], output: "Headphones", call: "Zoom")
+        ], output: "Headphones", call: "Zoom", expanded: "Spotify",
+           previewLevels: ["Spotify": 0.12, "VLC": 0.4, "Zoom": 0.6])
 
         let view = NSHostingView(rootView: MixerView(engine: engine).background(Color(nsColor: .windowBackgroundColor)))
         view.appearance = NSAppearance(named: .aqua)
@@ -250,5 +281,80 @@ enum SelfTest {
         view.cacheDisplay(in: view.bounds, to: bitmap)
         try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
         exit(0)
+    }
+
+    /// `Volumist --ui-check <log-file>`: opens and closes an app's details repeatedly in the real
+    /// popover, with few and with many apps. It must resize, stay anchored and fit on the screen.
+    @MainActor
+    static func checkExpansion(log path: String) {
+        NSApplication.shared.finishLaunching()
+        var report = ""
+        var passed = true
+        for count in [1, 30] {
+            let apps = (0..<count).map {
+                AudioApp(id: "app\($0)", name: "App \($0)", icon: nil, isPlaying: true, volume: 1, isMuted: false,
+                         outputUID: nil, outputName: nil, outputMissing: false)
+            }
+            let engine = AudioEngine(preview: apps, output: "Output", call: "Call", expanded: nil, previewLevels: [:])
+            let controller = AppController(engine: engine)
+            controller.install()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            controller.toggle()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            guard let window = controller.popover.contentViewController?.view.window else { exit(2) }
+            let closed = window.frame
+            let screen = window.screen?.visibleFrame.height ?? 0
+
+            var failures = 0
+            var drift: CGFloat = 0
+            var tallest = closed.height
+            for _ in 0..<10 {
+                engine.expandedApp = "app0"
+                RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+                let open = window.frame
+                tallest = max(tallest, open.height)
+                if count == 1, open.height <= closed.height { failures += 1 }
+                drift = max(drift, abs(open.maxY - closed.maxY), abs(open.midX - closed.midX))
+                engine.expandedApp = nil
+                RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+                let shut = window.frame
+                if shut.height != closed.height { failures += 1 }
+                drift = max(drift, abs(shut.maxY - closed.maxY), abs(shut.midX - closed.midX))
+            }
+            report += "\(count) apps: closed height \(closed.height), tallest \(tallest), screen \(screen), failed \(failures) of 20, top edge moved \(drift)\n"
+            passed = passed && failures == 0 && drift < 1 && tallest <= screen
+
+            // A dropdown must stay open, even if Volumist isn't the active app.
+            if count == 1 {
+                let control = Dropdown.Control()
+                control.frame = NSRect(x: 20, y: 20, width: 100, height: 20)
+                control.items = [DropdownItem(title: "One") {}, DropdownItem(title: "Two") {}]
+                window.contentView?.addSubview(control)
+                var stayedOpen = false
+                let timer = Timer(timeInterval: 1.2, repeats: false) { _ in
+                    MainActor.assumeIsolated {
+                        stayedOpen = control.activeMenu != nil
+                        control.activeMenu?.cancelTracking()
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                control.openMenu()
+                RunLoop.main.run(until: Date().addingTimeInterval(1.6))
+                control.removeFromSuperview()
+                report += "app active: \(NSApp.isActive), dropdown open after 1.2 s: \(stayedOpen), window open: \(controller.popover.isShown)\n"
+                passed = passed && stayedOpen && controller.popover.isShown
+            }
+
+            // The Escape key closes the window.
+            let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                       windowNumber: window.windowNumber, context: nil, characters: "\u{1b}",
+                                       charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)
+            if let key { NSApp.sendEvent(key) }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            report += "closed by Escape: \(!controller.popover.isShown)\n"
+            passed = passed && !controller.popover.isShown
+        }
+        try? report.write(toFile: path, atomically: true, encoding: .utf8)
+        exit(passed ? 0 : 1)
     }
 }

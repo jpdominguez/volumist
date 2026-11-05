@@ -23,6 +23,14 @@ Two things to know:
 - The Command Line Tools have no SwiftUI macro plugin, so `@State` and other macro-based APIs don't compile with
   them. Keep state in `AudioEngine` or another `ObservableObject`, so everyone can build without Xcode.
 
+## Tests
+
+The mixer tests use synthetic audio and need no hardware or permissions:
+
+```bash
+./scripts/test.sh
+```
+
 ## Diagnostics
 
 With an app playing audio, this run exercises the real engine and writes `check.log` to the folder you pass, which
@@ -32,8 +40,16 @@ must already exist. It changes the volume of the first playing app and briefly p
 open -n build/Volumist.app --args --check "$PWD/diagnostics"
 ```
 
-`--selftest <pid> <log-file>` does a lower-level gain measurement on a single process, and
+`--selftest <pid> <log-file>` does a lower-level gain measurement on a single process, `--ui-check <log-file>` opens
+and closes an app's details in the real popover and verifies that it resizes without moving, and
 `--render-preview <png>` regenerates `docs/screenshot.png` with sample data.
+
+Taps see an app's audio before it is muted, including global taps, so muting can't be verified by measuring. Listen
+to it. Engine events are logged, and you can read them with:
+
+```bash
+log show --last 1h --info --predicate 'subsystem == "io.github.jpdominguez.volumist"'
+```
 
 ## Code guidelines
 
