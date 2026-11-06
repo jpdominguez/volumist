@@ -149,6 +149,18 @@ int main(void) {
     vm_destroy(m);
 
     m = vm_create(1);
+    vm_set_first_output_channels(m, 2);
+    vm_set_output_gains(m, 1, 0.25f);
+    route(m, (UInt32[]){2, 2}, 2, rms);
+    expect("output gains: the first is unchanged", rms[0], 0.099, 0.101);
+    expect("output gains: the second follows its gain", rms[2], 0.0245, 0.0255);
+    vm_set_output_gains(m, 0.5f, 0);
+    route(m, (UInt32[]){2, 2}, 2, rms);
+    expect("output gains: the first can change too", rms[0], 0.049, 0.051);
+    expect("output gains: the second can be silenced", rms[2], 0, 0.001);
+    vm_destroy(m);
+
+    m = vm_create(1);
     vm_set_first_output_channels(m, 4);
     route(m, (UInt32[]){4, 2}, 2, rms);
     expect("four channels: extra channels stay silent", rms[2] + rms[3], 0, 0.001);

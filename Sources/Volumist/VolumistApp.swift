@@ -502,6 +502,19 @@ struct AppDetails: View {
                              accessibilityLabel: "Second output of \(app.name)")
                     .fixedSize()
                 }
+                if app.secondOutputUID != nil, !app.secondOutputMissing, !app.secondOutputFailed {
+                    HStack(spacing: 6) {
+                        Text("Its volume").font(.caption).foregroundStyle(.secondary)
+                        Slider(value: Binding(get: { app.secondOutputVolume },
+                                              set: { engine.setSecondOutputVolume($0, for: app.id) }), in: 0...1)
+                            .controlSize(.small)
+                            .accessibilityLabel("Volume of the second output of \(app.name)")
+                        Text("\(Int((app.secondOutputVolume * 100).rounded()))%")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .frame(width: 34, alignment: .trailing)
+                    }
+                    if engine.systemVolume != nil { note("Both outputs follow the Mac's volume and mute.") }
+                }
                 if app.secondOutputFailed {
                     note("macOS couldn't use these two outputs together, so only the first one is playing.", color: .orange)
                 } else if app.mayEcho {

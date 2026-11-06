@@ -100,7 +100,9 @@ from the GitHub API. It only shows a link to the release page and never download
 An app with a second output gets one aggregate with both devices. The first is the clock, and the second has drift
 compensation. The aggregate's output buffers follow the order of its subdevices, so `vm_set_first_output_channels` tells
 the mixer where the second device starts. Both get the same processed audio, and a mono device gets a mix that ignores
-balance. A pair that macOS refuses falls back to the first output, and isn't tried again until the setting changes.
+balance. The Mac's volume and mute only reach its current output, so the mixer gives any output that isn't the current
+one a gain that follows them, on the same curve as the app sliders. The second output also has a volume of its own. A
+pair that macOS refuses falls back to the first output, and isn't tried again until the setting changes.
 
 ## Launch screens
 

@@ -27,12 +27,14 @@ struct VMMixer {
     _Atomic float balance;
     _Atomic float peak;
     _Atomic UInt32 first_output_channels;
+    _Atomic float output_target[2];
     _Atomic int level_enabled;
     _Atomic float level_detect; // per-sample smoothing coefficients, which depend on the sample rate
     _Atomic float level_down;
     _Atomic float level_up;
     float current;
     float current_balance;
+    float output_gain[2];
     float level_energy;
     float level_gain;
 
@@ -54,6 +56,9 @@ VMMixer *vm_create(float initial_gain) {
     atomic_store(&m->target, initial_gain);
     atomic_store(&m->ramp, 0.002f);
     m->current = initial_gain;
+    atomic_store(&m->output_target[0], 1.0f);
+    atomic_store(&m->output_target[1], 1.0f);
+    m->output_gain[0] = m->output_gain[1] = 1.0f;
     m->level_gain = 1.0f;
     m->back = 1;
     m->front = 0;
@@ -71,6 +76,11 @@ void vm_set_gain(VMMixer *m, float gain, float ramp) {
 void vm_set_balance(VMMixer *m, float balance) { atomic_store(&m->balance, balance); }
 
 void vm_set_first_output_channels(VMMixer *m, UInt32 channels) { atomic_store(&m->first_output_channels, channels); }
+
+void vm_set_output_gains(VMMixer *m, float first, float second) {
+    atomic_store(&m->output_target[0], first);
+    atomic_store(&m->output_target[1], second);
+}
 
 static float smoothing(double seconds, double sample_rate) {
     return (float)(1.0 - exp(-1.0 / (seconds * sample_rate)));
@@ -189,6 +199,10 @@ OSStatus vm_ioproc(AudioObjectID device, const AudioTimeStamp *now,
     float peak = 0;
     UInt32 first_channels = atomic_load(&m->first_output_channels);
     if (first_channels == 0 || first_channels >= out_channels) first_channels = out_channels;
+    float first_target = atomic_load(&m->output_target[0]);
+    float second_target = atomic_load(&m->output_target[1]);
+    float first_gain = m->output_gain[0];
+    float second_gain = m->output_gain[1];
 
     UInt32 frames = in_frames;
     for (UInt32 b = 0; b < output->mNumberBuffers; b++) {
@@ -201,6 +215,8 @@ OSStatus vm_ioproc(AudioObjectID device, const AudioTimeStamp *now,
     for (UInt32 i = 0; i < frames; i++) {
         gain += (target - gain) * ramp;
         balance += (balance_target - balance) * 0.002f;
+        first_gain += (first_target - first_gain) * 0.002f;
+        second_gain += (second_target - second_gain) * 0.002f;
         float left = src[i * in_channels];
         float right = in_channels > 1 ? src[i * in_channels + 1] : left;
         left = (float)run_eq(m, eq, left, 0);
@@ -221,13 +237,15 @@ OSStatus vm_ioproc(AudioObjectID device, const AudioTimeStamp *now,
             float *dst = output->mBuffers[b].mData;
             for (UInt32 c = 0; c < ch; c++, channel++) {
                 dst[i * ch + c] = channel < first_channels
-                    ? output_sample(channel, first_channels, l, r, mono)
-                    : output_sample(channel - first_channels, out_channels - first_channels, l, r, mono);
+                    ? first_gain * output_sample(channel, first_channels, l, r, mono)
+                    : second_gain * output_sample(channel - first_channels, out_channels - first_channels, l, r, mono);
             }
         }
     }
     m->current = gain;
     m->current_balance = balance;
+    m->output_gain[0] = first_gain;
+    m->output_gain[1] = second_gain;
 
     // Denormals are very slow on Intel, and decaying filter state ends up as denormals in silence.
     for (int i = 0; i < VM_EQ_BANDS; i++) {

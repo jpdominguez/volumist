@@ -53,6 +53,8 @@ final class TapSession {
 
     func setBalance(_ balance: Float) { vm_set_balance(mixer, balance) }
 
+    func setOutputGains(first: Float, second: Float) { vm_set_output_gains(mixer, first, second) }
+
     func setEqualizer(_ gains: [Float]) {
         equalizer = gains
         vm_set_eq(mixer, gains, sampleRate)

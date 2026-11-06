@@ -21,6 +21,9 @@ void vm_set_balance(VMMixer *mixer, float balance);
 // Call before starting I/O.
 void vm_set_first_output_channels(VMMixer *mixer, UInt32 channels);
 
+// A gain for each of the two outputs, on top of everything else. With one output, only `first` applies.
+void vm_set_output_gains(VMMixer *mixer, float first, float second);
+
 // Gains in dB for the bands in vm_eq_frequency order. Call from a single non-real-time thread.
 void vm_set_eq(VMMixer *mixer, const float *gains_db, double sample_rate);
 float vm_eq_frequency(int band);

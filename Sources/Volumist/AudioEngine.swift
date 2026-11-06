@@ -17,6 +17,7 @@ struct AudioApp: Identifiable {
     var outputMissing: Bool  // the chosen output is disconnected, so it plays through the system one
     var secondOutputUID: String? // also plays here
     var secondOutputName: String?
+    var secondOutputVolume = 1.0
     var secondOutputMissing = false
     var secondOutputFailed = false // macOS couldn't combine the two, so only the first one plays
     var isMono = false       // every output in use is mono, so balance can't do anything
@@ -154,6 +155,7 @@ final class AudioEngine: ObservableObject {
         var outputName: String? // so it can be shown while disconnected
         var secondOutputUID: String?
         var secondOutputName: String?
+        var secondOutputVolume: Double?
         // Optional so that settings saved by earlier versions still decode.
         var neverLower: Bool?
         var balance: Double?
@@ -183,6 +185,7 @@ final class AudioEngine: ObservableObject {
     private var volumeListener: AudioObjectPropertyListenerBlock?
     private var callTracker = CallTracker()
     private var failedOutputs: [String: [String]] = [:] // tried and refused: not retried until they change
+    private var isSystemMuted = false
     /// Diagnostics only: behaves as if this app had the microphone open.
     var simulatedCallApp: String? { didSet { reconcile() } }
     private var identities: [pid_t: AppIdentity] = [:]
@@ -294,7 +297,15 @@ final class AudioEngine: ObservableObject {
 
     /// A nil `uid` plays on a single output again.
     func setSecondOutput(_ uid: String?, name: String? = nil, for id: String) {
-        change(id) { $0.secondOutputUID = uid; $0.secondOutputName = name }
+        change(id) {
+            $0.secondOutputUID = uid
+            $0.secondOutputName = name
+            if uid == nil { $0.secondOutputVolume = nil }
+        }
+    }
+
+    func setSecondOutputVolume(_ volume: Double, for id: String) {
+        change(id) { $0.secondOutputVolume = volume == 1 ? nil : volume }
     }
 
     /// What can be added as a call app: open apps, plus those already added.
@@ -466,6 +477,22 @@ final class AudioEngine: ObservableObject {
         } else {
             session.stop()
         }
+        applyOutputGains(session, setting: setting)
+    }
+
+    /// The Mac's volume and mute only reach its current output, so with two outputs the other one
+    /// follows them here. Gains use the same curve as the app volumes.
+    private func applyOutputGains(_ session: TapSession, setting: Setting) {
+        guard session.outputs.count > 1 else { return session.setOutputGains(first: 1, second: 1) }
+        let level = isSystemMuted ? 0 : Float(systemVolume ?? 1)
+        let following = level * level
+        let second = Float(setting.secondOutputVolume ?? 1)
+        session.setOutputGains(first: session.outputs[0] == defaultOutputUID ? 1 : following,
+                               second: second * second * (session.outputs[1] == defaultOutputUID ? 1 : following))
+    }
+
+    private func applyOutputGains() {
+        for (id, session) in sessions { applyOutputGains(session, setting: settings[id] ?? Setting()) }
     }
 
     /// A pair macOS can't combine must not leave the app silent, or be retried on every pass.
@@ -616,6 +643,8 @@ final class AudioEngine: ObservableObject {
             if let old = volumeDevice, let listener = volumeListener {
                 var addr = systemVolumeAddress
                 AudioObjectRemovePropertyListenerBlock(old, &addr, .main, listener)
+                var mute = systemMuteAddress
+                AudioObjectRemovePropertyListenerBlock(old, &mute, .main, listener)
             }
             volumeDevice = device
             volumeListener = nil
@@ -624,16 +653,23 @@ final class AudioEngine: ObservableObject {
                     MainActor.assumeIsolated {
                         guard let self, let device = self.volumeDevice else { return }
                         self.systemVolume = readSystemVolume(device)
+                        self.isSystemMuted = readSystemMute(device)
+                        self.applyOutputGains()
                     }
                 }
                 var addr = systemVolumeAddress
                 if AudioObjectAddPropertyListenerBlock(device, &addr, .main, listener) == noErr {
                     volumeListener = listener
                 }
+                var mute = systemMuteAddress
+                if AudioObjectHasProperty(device, &mute) {
+                    AudioObjectAddPropertyListenerBlock(device, &mute, .main, listener)
+                }
             }
         }
         let volume = device.flatMap(readSystemVolume)
         if volume != systemVolume { systemVolume = volume }
+        isSystemMuted = device.map(readSystemMute) ?? false
     }
 
     private func watchProcess(_ object: AudioObjectID) {
@@ -669,6 +705,7 @@ final class AudioEngine: ObservableObject {
                             outputUID: setting.outputUID, outputName: setting.outputName,
                             outputMissing: setting.outputUID.map { uid in !devices.contains { $0.id == uid } } ?? false,
                             secondOutputUID: setting.secondOutputUID, secondOutputName: setting.secondOutputName,
+                            secondOutputVolume: setting.secondOutputVolume ?? 1,
                             secondOutputMissing: setting.secondOutputUID.map { uid in !devices.contains { $0.id == uid } } ?? false,
                             secondOutputFailed: failedOutputs[id] == outputs && outputs.count > 1,
                             isMono: !targets.isEmpty && targets.allSatisfy { $0.channels == 1 },
@@ -687,6 +724,7 @@ final class AudioEngine: ObservableObject {
             && $0.volume == $1.volume && $0.isMuted == $1.isMuted
             && $0.outputUID == $1.outputUID && $0.outputMissing == $1.outputMissing
             && $0.secondOutputUID == $1.secondOutputUID && $0.secondOutputMissing == $1.secondOutputMissing
+            && $0.secondOutputVolume == $1.secondOutputVolume
             && $0.secondOutputFailed == $1.secondOutputFailed && $0.isMono == $1.isMono && $0.mayEcho == $1.mayEcho
             && $0.neverLower == $1.neverLower && $0.isLowered == $1.isLowered
             && $0.balance == $1.balance && $0.equalizer == $1.equalizer
