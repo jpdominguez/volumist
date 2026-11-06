@@ -269,8 +269,34 @@ enum SelfTest {
         ], output: "Headphones", call: "Zoom", expanded: "Spotify",
            previewLevels: ["Spotify": 0.12, "VLC": 0.4, "Zoom": 0.6])
 
-        let view = NSHostingView(rootView: MixerView(engine: engine).background(Color(nsColor: .windowBackgroundColor)))
-        view.appearance = NSAppearance(named: .aqua)
+        snapshot(MixerView(engine: engine), to: path)
+        exit(0)
+    }
+
+    /// `Volumist --render-screens <folder>`: the welcome and What's New screens, for checking them by eye.
+    @MainActor
+    static func renderScreens(to folder: String) {
+        _ = NSApplication.shared
+        let engine = AudioEngine(preview: [], output: "Output", call: nil, expanded: nil, previewLevels: [:],
+                                 lowersInCalls: false) // as a new user sees it
+        let notes = ReleaseNotes.bundled
+        engine.setPreview(permission: .unknown)
+        snapshot(WelcomeView(engine: engine) {}, to: "\(folder)/welcome.png")
+        snapshot(WelcomeView(engine: engine) {}, to: "\(folder)/welcome-dark.png", appearance: .darkAqua)
+        engine.setPreview(permission: .denied)
+        snapshot(WelcomeView(engine: engine) {}, to: "\(folder)/welcome-denied.png")
+        engine.setPreview(permission: .granted)
+        snapshot(WelcomeView(engine: engine) {}, to: "\(folder)/welcome-granted.png")
+        snapshot(WhatsNewView(notes: Array(notes.prefix(1))) {}, to: "\(folder)/whats-new.png")
+        snapshot(WhatsNewView(notes: notes) {}, to: "\(folder)/whats-new-all.png")
+        snapshot(MixerView(engine: engine), to: "\(folder)/mixer.png")
+        exit(0)
+    }
+
+    @MainActor
+    private static func snapshot(_ content: some View, to path: String, appearance: NSAppearance.Name = .aqua) {
+        let view = NSHostingView(rootView: content.background(Color(nsColor: .windowBackgroundColor)))
+        view.appearance = NSAppearance(named: appearance)
         view.frame.size = view.fittingSize
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = view
@@ -280,7 +306,85 @@ enum SelfTest {
         guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
         view.cacheDisplay(in: view.bounds, to: bitmap)
         try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
-        exit(0)
+    }
+
+    /// Which screen opens at launch, and that both open, fit and close in real windows.
+    @MainActor
+    private static func checkScreens() -> (report: String, passed: Bool) {
+        let notes = ReleaseNotes.parse("""
+            # Changelog
+
+            ## 1.3.0
+
+            - New thing.
+            - Other thing.
+
+            ## 1.2.1
+
+            - Fix.
+
+            ## 1.0.0
+
+            First public release.
+
+            - Volume.
+            """)
+        let second = Array(notes[1...1]), first = Array(notes[0...0])
+        func decide(_ lastSeen: String?, _ current: String, settings: Bool) -> LaunchScreen {
+            LaunchScreen.decide(lastSeen: lastSeen, current: current, hasSettings: settings, notes: notes)
+        }
+        let cases: [(String, LaunchScreen, LaunchScreen)] = [
+            ("new user", decide(nil, "1.3.0", settings: false), .welcome),
+            ("update from before 1.3", decide(nil, "1.3.0", settings: true), .whatsNew(first)),
+            ("same version", decide("1.3.0", "1.3.0", settings: true), .none),
+            ("update", decide("1.2.1", "1.3.0", settings: true), .whatsNew(first)),
+            ("skipped versions", decide("1.0.0", "1.3.0", settings: true), .whatsNew(Array(notes[0...1]))),
+            ("newer notes than the app", decide("1.0.0", "1.2.1", settings: true), .whatsNew(second)),
+            ("version without notes", decide("1.3.0", "1.3.1", settings: true), .none),
+            ("downgrade", decide("1.3.0", "1.2.1", settings: true), .none),
+        ]
+        var report = "parsed: \(notes.map { "\($0.version):\($0.changes.count)" })\n"
+        var passed = notes.map(\.changes.count) == [2, 1, 1]
+        for (name, got, expected) in cases where got != expected {
+            report += "launch screen, \(name): got \(got)\n"
+            passed = false
+        }
+
+        let engine = AudioEngine(preview: [], output: "Output", call: nil, expanded: nil, previewLevels: [:])
+        let controller = AppController(engine: engine)
+        controller.install()
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.4)) }
+        settle()
+        func press(_ title: String, in view: NSView?) { // SwiftUI's default button answers to Return
+            guard let window = view?.window else { return }
+            let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                       windowNumber: window.windowNumber, context: nil, characters: "\r",
+                                       charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)
+            if let key { NSApp.sendEvent(key) }
+        }
+
+        controller.showWelcome()
+        settle()
+        let welcome = controller.screenWindow
+        let welcomeFits = welcome.map { ($0.screen?.visibleFrame ?? .zero).contains($0.frame) } ?? false
+        report += "welcome: visible \(welcome?.isVisible == true), key \(welcome?.isKeyWindow == true), fits \(welcomeFits), size \(welcome?.frame.size ?? .zero)\n"
+        passed = passed && welcome?.isVisible == true && welcomeFits
+        press("Get Started", in: welcome?.contentView)
+        settle()
+        report += "Get Started: closed \(welcome?.isVisible == false), mixer open \(controller.popover.isShown)\n"
+        passed = passed && welcome?.isVisible == false && controller.popover.isShown
+
+        // From the mixer: the popover gives way to the window.
+        controller.showWhatsNew(notes)
+        settle()
+        let whatsNew = controller.screenWindow
+        report += "What's New: visible \(whatsNew?.isVisible == true), mixer closed \(!controller.popover.isShown), size \(whatsNew?.frame.size ?? .zero)\n"
+        passed = passed && whatsNew?.isVisible == true && !controller.popover.isShown
+        press("Done", in: whatsNew?.contentView)
+        settle()
+        report += "Done: closed \(whatsNew?.isVisible == false)\n"
+        passed = passed && whatsNew?.isVisible == false
+        return (report, passed)
     }
 
     /// `Volumist --ui-check <log-file>`: opens and closes an app's details repeatedly in the real
@@ -375,6 +479,9 @@ enum SelfTest {
             report += "press and release: stays closed: \(!controller.popover.isShown)\n"
             passed = passed && !controller.popover.isShown
         }
+        let screens = checkScreens()
+        report += screens.report
+        passed = passed && screens.passed
         try? report.write(toFile: path, atomically: true, encoding: .utf8)
         exit(passed ? 0 : 1)
     }

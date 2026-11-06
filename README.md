@@ -72,7 +72,8 @@ very welcome.
    xattr -dr com.apple.quarantine /Applications/Volumist.app
    ```
 
-4. Allow **audio capture** when macOS asks. Volumist needs this permission to process the audio of other apps.
+4. The welcome screen walks you through the setup. Allow **audio capture** when macOS asks: Volumist needs this
+   permission to process the audio of other apps.
 5. Look for the sliders icon in the menu bar.
 
 ### Build from source

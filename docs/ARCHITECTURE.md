@@ -35,6 +35,7 @@ Taps belong to the Volumist process, so quitting it restores normal audio.
 | `Sources/Volumist/Permission.swift` | Checks and requests the audio capture permission. |
 | `Sources/Volumist/CoreAudioHelpers.swift` | Thin wrappers over the Core Audio property API. |
 | `Sources/Volumist/VolumistApp.swift` | SwiftUI interface and entry point. |
+| `Sources/Volumist/Screens.swift` | The welcome and What's New screens, and which one opens at launch. |
 | `Sources/Volumist/SelfTest.swift` | Diagnostics modes. |
 
 ## The reconcile loop
@@ -89,6 +90,16 @@ without changing its path, and it is removed when the window closes, so there is
 
 `UpdateChecker` is off by default. When enabled, it runs at launch and every 24 hours, and requests the latest release
 from the GitHub API. It only shows a link to the release page and never downloads anything.
+
+## Launch screens
+
+A menu bar app opens no window, so `LaunchScreen` decides whether something should appear at launch. A new user gets
+the welcome screen, which also holds back the permission prompt until they have read why it is needed. After an update,
+What's New lists the versions not seen yet. `lastSeenVersion` records the last version opened. Versions before 1.3 didn't
+save it, so existing settings are what tell an update from a new user.
+
+The notes come from `CHANGELOG.md`, which `scripts/build.sh` copies into the app: its bullets are what users read, and a
+release without an entry for its version shows nothing. Nothing is fetched from the network.
 
 ## Design decisions
 

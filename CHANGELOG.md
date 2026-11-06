@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0
+
+- A welcome screen on first launch, which explains the audio permission and the main options.
+- A What's New screen after each update, also available from the Volumist window.
+
 ## 1.2.1
 
 - Fixed the window sometimes reopening when closing it from the menu bar icon.

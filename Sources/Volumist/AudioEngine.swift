@@ -155,13 +155,14 @@ final class AudioEngine: ObservableObject {
     private let updatesKey = "checksForUpdates"
 
     /// Sample state for rendering the UI, with no audio side effects.
-    init(preview apps: [AudioApp], output: String, call: String?, expanded: String?, previewLevels: [String: Float]) {
+    init(preview apps: [AudioApp], output: String, call: String?, expanded: String?, previewLevels: [String: Float],
+         lowersInCalls: Bool = true) {
         self.apps = apps
         outputName = output
         callAppName = call
         isPreview = true
         // Through the wrapper: assigning `ducking` would save it and reconcile against real audio.
-        _ducking = Published(initialValue: DuckingOptions(isEnabled: true))
+        _ducking = Published(initialValue: DuckingOptions(isEnabled: lowersInCalls))
         _launchAtLogin = Published(initialValue: false)
         _expandedApp = Published(initialValue: expanded)
         _systemVolume = Published(initialValue: 0.6)
@@ -170,6 +171,11 @@ final class AudioEngine: ObservableObject {
         })
         levels.levels = previewLevels
         permission = .granted
+    }
+
+    func setPreview(permission: AudioPermission.State) {
+        guard isPreview else { return }
+        self.permission = permission
     }
 
     func setPreview(apps: [AudioApp], call: String?, expanded: String?) {
@@ -184,7 +190,7 @@ final class AudioEngine: ObservableObject {
         groups.values.filter(\.usesMicrophone).map { "\($0.identity.name) (user app: \($0.identity.isUserApp))" }
     }
 
-    init() {
+    init(requestsPermission: Bool = true) {
         if let data = UserDefaults.standard.data(forKey: settingsKey),
            let saved = try? JSONDecoder().decode([String: Setting].self, from: data) {
             settings = saved
@@ -209,7 +215,7 @@ final class AudioEngine: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.reconcile() }
         }
-        if permission != .granted { requestPermission() }
+        if requestsPermission, permission != .granted { requestPermission() }
         reconcile()
     }
 

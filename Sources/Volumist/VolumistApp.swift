@@ -8,6 +8,8 @@ enum Entry {
             SelfTest.run(arguments: Array(CommandLine.arguments[(index + 1)...]))
         } else if let index = CommandLine.arguments.firstIndex(of: "--render-preview") {
             MainActor.assumeIsolated { SelfTest.renderPreview(to: CommandLine.arguments[index + 1]) }
+        } else if let index = CommandLine.arguments.firstIndex(of: "--render-screens") {
+            MainActor.assumeIsolated { SelfTest.renderScreens(to: CommandLine.arguments[index + 1]) }
         } else if let index = CommandLine.arguments.firstIndex(of: "--render-demo") {
             let arguments = CommandLine.arguments
             MainActor.assumeIsolated {
@@ -21,7 +23,10 @@ enum Entry {
         } else {
             MainActor.assumeIsolated {
                 let application = NSApplication.shared
-                let controller = AppController(engine: AudioEngine())
+                let screen = LaunchScreen.forThisLaunch()
+                // The welcome screen explains the permission before macOS asks for it.
+                let engine = AudioEngine(requestsPermission: screen != .welcome)
+                let controller = AppController(engine: engine, launchScreen: screen)
                 application.delegate = controller
                 application.run()
             }
@@ -40,17 +45,57 @@ final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var escapeMonitor: Any?
     private var resignObserver: NSObjectProtocol?
     private var lastClose = Date.distantPast
+    private let launchScreen: LaunchScreen
+    private(set) var screenWindow: NSWindow?
 
-    init(engine: AudioEngine) {
+    init(engine: AudioEngine, launchScreen: LaunchScreen = .none) {
         self.engine = engine
+        self.launchScreen = launchScreen
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         install()
+        switch launchScreen {
+        case .welcome: showWelcome()
+        case .whatsNew(let notes): showWhatsNew(notes)
+        case .none: break
+        }
+    }
+
+    func showWelcome() {
+        showScreen(title: "Welcome to Volumist", WelcomeView(engine: engine) { [weak self] in
+            self?.screenWindow?.close()
+            // Opening the mixer shows where it lives in the menu bar.
+            if self?.popover.isShown == false { self?.toggle() }
+        })
+    }
+
+    func showWhatsNew(_ notes: [ReleaseNotes]) {
+        showScreen(title: "What's New", WhatsNewView(notes: notes) { [weak self] in self?.screenWindow?.close() })
+    }
+
+    /// A window and not the popover, which closes as soon as the permission dialog takes the focus.
+    private func showScreen(title: String, _ content: some View) {
+        screenWindow?.close()
+        popover.performClose(nil)
+        let host = NSHostingController(rootView: content)
+        host.sizingOptions = .preferredContentSize
+        let window = NSWindow(contentViewController: host)
+        window.title = title
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask = [.titled, .closable, .fullSizeContentView]
+        window.isReleasedWhenClosed = false
+        window.center()
+        screenWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
     }
 
     func install() {
-        let host = NSHostingController(rootView: MixerView(engine: engine))
+        let host = NSHostingController(rootView: MixerView(engine: engine) { [weak self] in
+            self?.showWhatsNew(ReleaseNotes.bundled)
+        })
         host.sizingOptions = .preferredContentSize
         popover.contentViewController = host
         // Not .transient: it closes on mouse down, so the status item's click, which arrives on
@@ -112,6 +157,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
 struct MixerView: View {
     @ObservedObject var engine: AudioEngine
+    var showWhatsNew: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -170,6 +216,7 @@ struct MixerView: View {
                 Toggle("Open at login", isOn: $engine.launchAtLogin)
                     .toggleStyle(.checkbox)
                 Spacer()
+                Button("What's New", action: showWhatsNew)
                 Button("Reset") { engine.resetAll() }
                 Button("Quit") { NSApp.terminate(nil) }
             }
