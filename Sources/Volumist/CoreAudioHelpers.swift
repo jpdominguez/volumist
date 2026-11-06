@@ -75,6 +75,15 @@ struct OutputDevice: Identifiable, Equatable {
     let id: String // Unlike the AudioObjectID, the UID survives reconnections and restarts
     let object: AudioObjectID
     let name: String
+    var channels = 2
+    var isBluetooth = false
+}
+
+func outputChannelCount(_ device: AudioObjectID) -> Int {
+    readObjectList(device, kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeOutput).reduce(0) { total, stream in
+        let format = readValue(stream, kAudioStreamPropertyVirtualFormat, as: AudioStreamBasicDescription())
+        return total + Int(format?.mChannelsPerFrame ?? 0)
+    }
 }
 
 func outputDevices() -> [OutputDevice] {
@@ -87,6 +96,8 @@ func outputDevices() -> [OutputDevice] {
         let transport = readValue(object, kAudioDevicePropertyTransportType, as: UInt32(0))
         guard transport != kAudioDeviceTransportTypeVirtual,
               transport != kAudioDeviceTransportTypeAggregate else { return nil }
-        return OutputDevice(id: uid, object: object, name: name)
+        return OutputDevice(id: uid, object: object, name: name, channels: outputChannelCount(object),
+                            isBluetooth: transport == kAudioDeviceTransportTypeBluetooth
+                                || transport == kAudioDeviceTransportTypeBluetoothLE)
     }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 }

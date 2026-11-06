@@ -1,0 +1,40 @@
+name: CI
+
+# The maintainer's Mac can't cover these. Runners have no audio hardware, so this proves that the
+# app builds, starts and draws on each system and processor, not that audio works there.
+on:
+  push:
+    branches: [main, "release-*"]
+  pull_request:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: System
+        run: sw_vers && uname -m
+      - name: Mixer tests
+        run: ./scripts/test.sh
+      - name: Build
+        run: ./scripts/build.sh
+      - name: Render the screens
+        run: |
+          mkdir -p screens
+          build/Volumist.app/Contents/MacOS/Volumist --render-screens "$PWD/screens" </dev/null
+          test -s screens/welcome.png
+      - name: Interface checks
+        run: |
+          status=0
+          build/Volumist.app/Contents/MacOS/Volumist --ui-check "$PWD/ui-check.log" </dev/null || status=$?
+          cat ui-check.log
+          exit $status
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screens-${{ matrix.runner }}
+          path: screens

@@ -4,6 +4,11 @@
 
 - A welcome screen on first launch, which explains the audio permission and the main options.
 - A What's New screen after each update, also available from the Volumist window.
+- Play an app on two outputs at once.
+- Choose more apps that count as calls, including a browser for calls such as Google Meet.
+- Known call apps stay in their call when you mute yourself, even if they release the microphone.
+- Balance now says when it can't work because the output is mono, as with Bluetooth headphones during a call.
+- Fixed balance changing the volume on mono outputs.
 
 ## 1.2.1
 

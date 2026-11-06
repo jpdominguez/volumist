@@ -271,11 +271,36 @@ struct MixerView: View {
                     }, accessibilityLabel: "Detect calls from")
                     .fixedSize()
                 }
+                if engine.ducking.trigger == .callApps {
+                    HStack {
+                        Text("Also count").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Dropdown(title: extraCallAppsTitle, makeItems: {
+                            engine.callAppCandidates().map { app in
+                                DropdownItem(title: app.name, isSelected: engine.ducking.extraCallApps?[app.id] != nil) {
+                                    engine.toggleCallApp(app.id, name: app.name)
+                                }
+                            }
+                        }, accessibilityLabel: "Other apps that count as calls")
+                        .fixedSize()
+                    }
+                    Text("For calls in a browser, such as Google Meet, add your browser.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 if let name = engine.callAppName {
                     Label("Call detected in \(name)", systemImage: "phone.fill")
                         .font(.caption).foregroundStyle(.green)
                 }
             }
+        }
+    }
+
+    private var extraCallAppsTitle: String {
+        let names = (engine.ducking.extraCallApps ?? [:]).values.sorted()
+        switch names.count {
+        case 0: return "Choose apps"
+        case 1: return names[0]
+        default: return "\(names.count) apps"
         }
     }
 
@@ -371,7 +396,9 @@ struct AppRow: View {
         .disabled(!enabled)
     }
 
-    private var isCustomized: Bool { app.balance != 0 || app.equalizer != Equalizer.flat || app.levelsVolume }
+    private var isCustomized: Bool {
+        app.balance != 0 || app.equalizer != Equalizer.flat || app.levelsVolume || app.secondOutputUID != nil
+    }
 
     private var statusText: String {
         if app.isMuted { return "Muted" }
@@ -440,8 +467,48 @@ struct AppDetails: View {
         Equalizer.presets.first { $0.gains == app.equalizer }?.name ?? "Custom"
     }
 
+    private var secondOutputLabel: String {
+        guard let name = app.secondOutputName, app.secondOutputUID != nil else { return "No other output" }
+        return app.secondOutputMissing ? "\(name) (disconnected)" : name
+    }
+
+    /// The other outputs, as the first one can't also be the second.
+    private var secondOutputItems: [DropdownItem] {
+        let first = app.outputMissing ? engine.defaultOutputUID : app.outputUID ?? engine.defaultOutputUID
+        var items = [DropdownItem(title: "No other output", isSelected: app.secondOutputUID == nil) {
+            engine.setSecondOutput(nil, for: app.id)
+        }]
+        for (index, device) in engine.devices.filter({ $0.id != first }).enumerated() {
+            items.append(DropdownItem(title: device.name, isSelected: app.secondOutputUID == device.id,
+                                      isSeparatorBefore: index == 0) {
+                engine.setSecondOutput(device.id, name: device.name, for: app.id)
+            })
+        }
+        return items
+    }
+
+    private func note(_ text: String, color: Color = .secondary) -> some View {
+        Text(text).font(.caption).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if engine.devices.count > 1 || app.secondOutputUID != nil {
+                HStack {
+                    Text("Also play on").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Dropdown(title: secondOutputLabel, items: secondOutputItems,
+                             color: app.secondOutputMissing ? .systemOrange : .labelColor,
+                             accessibilityLabel: "Second output of \(app.name)")
+                    .fixedSize()
+                }
+                if app.secondOutputFailed {
+                    note("macOS couldn't use these two outputs together, so only the first one is playing.", color: .orange)
+                } else if app.mayEcho {
+                    note("Bluetooth plays later than other outputs, so you may hear an echo in the same room.")
+                }
+            }
+
             HStack(spacing: 6) {
                 Text("Balance").font(.caption).foregroundStyle(.secondary)
                 Text("L").font(.caption2).foregroundStyle(.secondary)
@@ -450,7 +517,11 @@ struct AppDetails: View {
                        in: -1...1)
                     .controlSize(.small)
                     .accessibilityLabel("Balance of \(app.name)")
+                    .disabled(app.isMono)
                 Text("R").font(.caption2).foregroundStyle(.secondary)
+            }
+            if app.isMono {
+                note("This output is mono right now, so balance has no effect. Bluetooth headphones switch to mono while their microphone is in use.")
             }
 
             Toggle("Level loud and quiet parts", isOn: Binding(get: { app.levelsVolume },

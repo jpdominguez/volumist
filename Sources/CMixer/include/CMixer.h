@@ -17,6 +17,10 @@ void vm_set_gain(VMMixer *mixer, float gain, float ramp);
 // -1 is fully left, 0 is centered, 1 is fully right.
 void vm_set_balance(VMMixer *mixer, float balance);
 
+// For an aggregate with two outputs: how many channels the first one has. 0 means a single output.
+// Call before starting I/O.
+void vm_set_first_output_channels(VMMixer *mixer, UInt32 channels);
+
 // Gains in dB for the bands in vm_eq_frequency order. Call from a single non-real-time thread.
 void vm_set_eq(VMMixer *mixer, const float *gains_db, double sample_rate);
 float vm_eq_frequency(int band);

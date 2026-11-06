@@ -58,6 +58,10 @@ Each audio process reports whether it is using the microphone (`kAudioProcessPro
 `AudioEngine.refreshCall` treats a user app doing so as a call. System services are ignored, since some keep the
 microphone open permanently, as are gaps of under 2 seconds.
 
+Some apps release the microphone when you mute yourself, so `CallTracker` keeps a known call app in its call while it
+is still playing, for up to 3 minutes since it last used the microphone. The limit covers apps that leave their output
+open after a call. Browsers and apps added by the user don't get this, because playing is normal for them.
+
 An app is lowered if a call is active, it isn't in the call, it hasn't been excluded, and it is playing. Its gain is
 its normal gain multiplied by the lowering level, which uses the same curve as the sliders. Apps at their defaults
 get a tap for the duration of the call, and lose it once they have faded back up. Fades take about a second at
@@ -90,6 +94,13 @@ without changing its path, and it is removed when the window closes, so there is
 
 `UpdateChecker` is off by default. When enabled, it runs at launch and every 24 hours, and requests the latest release
 from the GitHub API. It only shows a link to the release page and never downloads anything.
+
+## Two outputs
+
+An app with a second output gets one aggregate with both devices. The first is the clock, and the second has drift
+compensation. The aggregate's output buffers follow the order of its subdevices, so `vm_set_first_output_channels` tells
+the mixer where the second device starts. Both get the same processed audio, and a mono device gets a mix that ignores
+balance. A pair that macOS refuses falls back to the first output, and isn't tried again until the setting changes.
 
 ## Launch screens
 
@@ -134,6 +145,10 @@ They are the reason Volumist can't be submitted to the Mac App Store in its curr
 
 ## Known gaps
 
+- Two outputs with different sample rates are untested, including Bluetooth headphones in call mode next to wired
+  outputs. If macOS creates the aggregate but plays them badly, Volumist can't detect it.
+- `ci.yml` builds and checks the interface on macOS 14, 15 and Intel, but runners have no audio hardware. Real audio has
+  only been tested on Apple silicon.
 - Apps that choose their own device are sent to Volumist's selected output once adjusted, because a tap mixes all of a
   process's audio together.
 - Taps deliver stereo, so surround audio is downmixed for adjusted apps.

@@ -26,6 +26,7 @@ struct VMMixer {
     _Atomic float ramp;
     _Atomic float balance;
     _Atomic float peak;
+    _Atomic UInt32 first_output_channels;
     _Atomic int level_enabled;
     _Atomic float level_detect; // per-sample smoothing coefficients, which depend on the sample rate
     _Atomic float level_down;
@@ -68,6 +69,8 @@ void vm_set_gain(VMMixer *m, float gain, float ramp) {
 }
 
 void vm_set_balance(VMMixer *m, float balance) { atomic_store(&m->balance, balance); }
+
+void vm_set_first_output_channels(VMMixer *m, UInt32 channels) { atomic_store(&m->first_output_channels, channels); }
 
 static float smoothing(double seconds, double sample_rate) {
     return (float)(1.0 - exp(-1.0 / (seconds * sample_rate)));
@@ -142,6 +145,12 @@ static inline float soft_limit(float x) {
     return x < 0 ? -y : y;
 }
 
+// The sample for one channel of an output with `channels` channels. Extra channels stay silent.
+static inline float output_sample(UInt32 channel, UInt32 channels, float l, float r, float mono) {
+    if (channels == 1) return mono;
+    return channel == 0 ? l : channel == 1 ? r : 0;
+}
+
 OSStatus vm_ioproc(AudioObjectID device, const AudioTimeStamp *now,
                    const AudioBufferList *input, const AudioTimeStamp *input_time,
                    AudioBufferList *output, const AudioTimeStamp *output_time,
@@ -178,6 +187,8 @@ OSStatus vm_ioproc(AudioObjectID device, const AudioTimeStamp *now,
     float gain = m->current;
     float balance = m->current_balance;
     float peak = 0;
+    UInt32 first_channels = atomic_load(&m->first_output_channels);
+    if (first_channels == 0 || first_channels >= out_channels) first_channels = out_channels;
 
     UInt32 frames = in_frames;
     for (UInt32 b = 0; b < output->mNumberBuffers; b++) {
@@ -200,6 +211,8 @@ OSStatus vm_ioproc(AudioObjectID device, const AudioTimeStamp *now,
         right *= level;
         float l = soft_limit(left * gain * (balance > 0 ? 1.0f - balance : 1.0f));
         float r = soft_limit(right * gain * (balance < 0 ? 1.0f + balance : 1.0f));
+        // A mono output has no sides, so balance must not change its level either.
+        float mono = soft_limit(0.5f * (left + right) * gain);
         peak = fmaxf(peak, fmaxf(fabsf(l), fabsf(r)));
 
         UInt32 channel = 0;
@@ -207,9 +220,9 @@ OSStatus vm_ioproc(AudioObjectID device, const AudioTimeStamp *now,
             UInt32 ch = output->mBuffers[b].mNumberChannels;
             float *dst = output->mBuffers[b].mData;
             for (UInt32 c = 0; c < ch; c++, channel++) {
-                if (out_channels == 1) dst[i * ch + c] = 0.5f * (l + r);
-                else if (channel == 0) dst[i * ch + c] = l;
-                else if (channel == 1) dst[i * ch + c] = r;
+                dst[i * ch + c] = channel < first_channels
+                    ? output_sample(channel, first_channels, l, r, mono)
+                    : output_sample(channel - first_channels, out_channels - first_channels, l, r, mono);
             }
         }
     }

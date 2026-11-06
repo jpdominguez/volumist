@@ -15,6 +15,12 @@ struct AudioApp: Identifiable {
     var outputUID: String?   // nil: follows the system output
     var outputName: String?
     var outputMissing: Bool  // the chosen output is disconnected, so it plays through the system one
+    var secondOutputUID: String? // also plays here
+    var secondOutputName: String?
+    var secondOutputMissing = false
+    var secondOutputFailed = false // macOS couldn't combine the two, so only the first one plays
+    var isMono = false       // every output in use is mono, so balance can't do anything
+    var mayEcho = false      // two outputs with very different delays
     var neverLower = false   // excluded from lowering during calls
     var isLowered = false    // being lowered right now because of a call
     var balance = 0.0        // -1 left, 1 right
@@ -52,13 +58,47 @@ struct DuckingOptions: Codable, Equatable {
     var isEnabled = false
     var level = 0.5 // slider position: same perceptual curve as the app volumes, relative to them
     var trigger = Trigger.anyMicrophone
+    var extraCallApps: [String: String]? // bundle ID to name. Optional so earlier settings still decode.
 
-    /// Apps counted by `.callApps`. Browsers are not here: they use the microphone for many other things.
+    func countsAsCallApp(_ id: String) -> Bool {
+        trigger == .anyMicrophone || Self.callApps.contains(id) || extraCallApps?[id] != nil
+    }
+
+    /// Apps counted by `.callApps`. Browsers are not here: they use the microphone for many other things,
+    /// so they only count if the user adds them.
     static let callApps: Set<String> = [
         "us.zoom.xos", "com.microsoft.teams2", "com.microsoft.teams", "com.apple.FaceTime",
         "com.tinyspeck.slackmacgap", "com.hnc.Discord", "net.whatsapp.WhatsApp",
         "ru.keepcoder.Telegram", "com.skype.skype", "Cisco-Systems.Spark", "com.cisco.webexmeetingsapp",
+        "org.whispersystems.signal-desktop",
     ]
+}
+
+/// Decides whether a call is still going on. Some apps release the microphone when you mute yourself,
+/// so a known call app that is still playing stays in its call for a while.
+struct CallTracker {
+    static let grace: TimeInterval = 2     // ignore brief microphone gaps within a call
+    static let sustain: TimeInterval = 180 // limit, for apps that keep their output open after a call
+
+    /// The app kept in its call without using the microphone. It must not be lowered either.
+    private(set) var sustained: String?
+    private var last: (id: String, name: String, date: Date)?
+
+    /// Returns the name of the app in the call, if there is one.
+    mutating func update(active: (id: String, name: String)?, isPlaying: (String) -> Bool, now: Date) -> String? {
+        sustained = nil
+        if let active {
+            last = (active.id, active.name, now)
+            return active.name
+        }
+        guard let last else { return nil }
+        let silence = now.timeIntervalSince(last.date)
+        if DuckingOptions.callApps.contains(last.id), isPlaying(last.id), silence < Self.sustain {
+            sustained = last.id
+            return last.name
+        }
+        return silence < Self.grace ? last.name : nil // the periodic timer ends the grace period
+    }
 }
 
 /// Watches which apps use audio and keeps one `TapSession` per adjusted app.
@@ -69,7 +109,6 @@ final class AudioEngine: ObservableObject {
     private static let ioGrace: TimeInterval = 20   // keep I/O running after playback stops
     private static let tapHold: TimeInterval = 3    // avoids rebuilding the tap when passing through 100 %
     private static let listGrace: TimeInterval = 60 // keep the row visible after playback stops
-    private static let callGrace: TimeInterval = 2  // ignore brief microphone gaps within a call
 
     @Published private(set) var apps: [AudioApp] = []
     @Published private(set) var permission = AudioPermission.state
@@ -113,13 +152,16 @@ final class AudioEngine: ObservableObject {
         var isMuted = false
         var outputUID: String?
         var outputName: String? // so it can be shown while disconnected
+        var secondOutputUID: String?
+        var secondOutputName: String?
         // Optional so that settings saved by earlier versions still decode.
         var neverLower: Bool?
         var balance: Double?
         var equalizer: [Double]?
         var levelsVolume: Bool?
         var usesDefaultAudio: Bool {
-            volume == 1 && !isMuted && outputUID == nil && balance == nil && equalizer == nil && levelsVolume == nil
+            volume == 1 && !isMuted && outputUID == nil && secondOutputUID == nil && balance == nil
+                && equalizer == nil && levelsVolume == nil
         }
         var eqGains: [Float] { (equalizer ?? Equalizer.flat).map(Float.init) }
         var isEmpty: Bool { usesDefaultAudio && neverLower != true }
@@ -139,12 +181,12 @@ final class AudioEngine: ObservableObject {
     private var isPreview = false
     private var volumeDevice: AudioObjectID?
     private var volumeListener: AudioObjectPropertyListenerBlock?
-    private var lastCall = Date.distantPast
-    private var lastCallName: String?
+    private var callTracker = CallTracker()
+    private var failedOutputs: [String: [String]] = [:] // tried and refused: not retried until they change
     /// Diagnostics only: behaves as if this app had the microphone open.
     var simulatedCallApp: String? { didSet { reconcile() } }
     private var identities: [pid_t: AppIdentity] = [:]
-    private var defaultOutputUID: String?
+    private(set) var defaultOutputUID: String?
     private var processListeners: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
     private var deviceListeners: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
     private var timer: Timer?
@@ -250,6 +292,30 @@ final class AudioEngine: ObservableObject {
         change(id) { $0.outputUID = uid; $0.outputName = name }
     }
 
+    /// A nil `uid` plays on a single output again.
+    func setSecondOutput(_ uid: String?, name: String? = nil, for id: String) {
+        change(id) { $0.secondOutputUID = uid; $0.secondOutputName = name }
+    }
+
+    /// What can be added as a call app: open apps, plus those already added.
+    func callAppCandidates() -> [(id: String, name: String)] {
+        var found = ducking.extraCallApps ?? [:]
+        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
+            guard let id = app.bundleIdentifier, id != Bundle.main.bundleIdentifier,
+                  !DuckingOptions.callApps.contains(id) else { continue }
+            found[id] = app.localizedName ?? id
+        }
+        return found.map { (id: $0.key, name: $0.value) }.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    func toggleCallApp(_ id: String, name: String) {
+        var apps = ducking.extraCallApps ?? [:]
+        apps[id] = apps[id] == nil ? name : nil
+        ducking.extraCallApps = apps.isEmpty ? nil : apps
+    }
+
     func setBalance(_ balance: Double, for id: String) {
         change(id) { $0.balance = balance == 0 ? nil : balance }
     }
@@ -317,6 +383,7 @@ final class AudioEngine: ObservableObject {
         var setting = settings[id] ?? Setting()
         edit(&setting)
         settings[id] = setting.isEmpty ? nil : setting
+        failedOutputs[id] = nil
         lastChange[id] = Date()
         save()
         sessions[id]?.setGain(gain(for: setting, lowered: lowered.contains(id)))
@@ -393,10 +460,23 @@ final class AudioEngine: ObservableObject {
         // A tap only mutes once it has run, so I/O also runs for muted apps and at least once for
         // idle ones. A tap that was created but never read lets the app's audio through.
         let recentlyPlaying = now.timeIntervalSince(lastPlayed[id] ?? .distantPast) < Self.ioGrace
-        if recentlyPlaying || !session.hasStarted, let target = targetOutput(for: setting) {
-            try session.start(outputUID: target)
+        let outputs = targetOutputs(for: setting)
+        if recentlyPlaying || !session.hasStarted, !outputs.isEmpty {
+            try start(session, on: outputs, for: id)
         } else {
             session.stop()
+        }
+    }
+
+    /// A pair macOS can't combine must not leave the app silent, or be retried on every pass.
+    private func start(_ session: TapSession, on outputs: [String], for id: String) throws {
+        guard outputs.count > 1, failedOutputs[id] != outputs else { return try session.start(outputs: Array(outputs.prefix(1))) }
+        do {
+            try session.start(outputs: outputs)
+        } catch {
+            logger.error("\(id, privacy: .public): two outputs failed: \(String(describing: error), privacy: .public)")
+            failedOutputs[id] = outputs
+            try session.start(outputs: Array(outputs.prefix(1)))
         }
     }
 
@@ -436,22 +516,26 @@ final class AudioEngine: ObservableObject {
     }
 
     private func isCallApp(_ id: String, _ group: Group) -> Bool {
-        guard id != simulatedCallApp else { return true }
-        guard group.usesMicrophone, group.identity.isUserApp else { return false }
-        return ducking.trigger == .anyMicrophone || DuckingOptions.callApps.contains(id)
+        id == simulatedCallApp || id == callTracker.sustained || isUsingMicrophoneForCall(id, group)
+    }
+
+    private func isUsingMicrophoneForCall(_ id: String, _ group: Group) -> Bool {
+        group.usesMicrophone && group.identity.isUserApp && ducking.countsAsCallApp(id)
     }
 
     private func refreshCall(now: Date) {
-        var name: String?
-        if ducking.isEnabled {
-            name = simulatedCallApp ?? groups.filter { isCallApp($0.key, $0.value) }.map(\.value.identity.name).sorted().first
+        guard ducking.isEnabled else {
+            callTracker = CallTracker()
+            if callAppName != nil { callAppName = nil }
+            return
         }
-        if let name {
-            lastCall = now
-            lastCallName = name
-        } else if ducking.isEnabled, now.timeIntervalSince(lastCall) < Self.callGrace {
-            name = lastCallName // the periodic timer ends the grace period
+        var active = simulatedCallApp.map { (id: $0, name: $0) }
+        if active == nil {
+            active = groups.filter { isUsingMicrophoneForCall($0.key, $0.value) }
+                .map { (id: $0.key, name: $0.value.identity.name) }
+                .min { $0.name < $1.name }
         }
+        let name = callTracker.update(active: active, isPlaying: { groups[$0]?.isPlaying == true }, now: now)
         if name != callAppName { callAppName = name }
     }
 
@@ -460,6 +544,14 @@ final class AudioEngine: ObservableObject {
     private func targetOutput(for setting: Setting) -> String? {
         if let uid = setting.outputUID, devices.contains(where: { $0.id == uid }) { return uid }
         return defaultOutputUID
+    }
+
+    /// The second output is skipped while it is disconnected, or if it is also the first.
+    private func targetOutputs(for setting: Setting) -> [String] {
+        guard let first = targetOutput(for: setting) else { return [] }
+        guard let second = setting.secondOutputUID, second != first,
+              devices.contains(where: { $0.id == second }) else { return [first] }
+        return [first, second]
     }
 
     private func refreshDevices() {
@@ -483,7 +575,7 @@ final class AudioEngine: ObservableObject {
             let uid = device.id
             let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
                 MainActor.assumeIsolated {
-                    self?.sessions.values.filter { $0.outputUID == uid }.forEach { $0.stop() }
+                    self?.sessions.values.filter { $0.outputs.contains(uid) }.forEach { $0.stop() }
                     self?.reconcile()
                 }
             }
@@ -570,10 +662,17 @@ final class AudioEngine: ObservableObject {
             let setting = settings[id] ?? Setting()
             let recent = now.timeIntervalSince(lastPlayed[id] ?? .distantPast) < Self.listGrace
             guard group.isPlaying || recent || !setting.usesDefaultAudio else { return nil }
+            let outputs = targetOutputs(for: setting)
+            let targets = devices.filter { outputs.contains($0.id) }
             return AudioApp(id: id, name: group.identity.name, icon: group.identity.icon,
                             isPlaying: group.isPlaying, volume: setting.volume, isMuted: setting.isMuted,
                             outputUID: setting.outputUID, outputName: setting.outputName,
                             outputMissing: setting.outputUID.map { uid in !devices.contains { $0.id == uid } } ?? false,
+                            secondOutputUID: setting.secondOutputUID, secondOutputName: setting.secondOutputName,
+                            secondOutputMissing: setting.secondOutputUID.map { uid in !devices.contains { $0.id == uid } } ?? false,
+                            secondOutputFailed: failedOutputs[id] == outputs && outputs.count > 1,
+                            isMono: !targets.isEmpty && targets.allSatisfy { $0.channels == 1 },
+                            mayEcho: targets.count > 1 && targets.contains(where: \.isBluetooth),
                             neverLower: setting.neverLower == true, isLowered: lowered.contains(id),
                             balance: setting.balance ?? 0, equalizer: setting.equalizer ?? Equalizer.flat,
                             levelsVolume: setting.levelsVolume == true)
@@ -587,6 +686,8 @@ final class AudioEngine: ObservableObject {
         if !sorted.elementsEqual(apps, by: { $0.id == $1.id && $0.isPlaying == $1.isPlaying
             && $0.volume == $1.volume && $0.isMuted == $1.isMuted
             && $0.outputUID == $1.outputUID && $0.outputMissing == $1.outputMissing
+            && $0.secondOutputUID == $1.secondOutputUID && $0.secondOutputMissing == $1.secondOutputMissing
+            && $0.secondOutputFailed == $1.secondOutputFailed && $0.isMono == $1.isMono && $0.mayEcho == $1.mayEcho
             && $0.neverLower == $1.neverLower && $0.isLowered == $1.isLowered
             && $0.balance == $1.balance && $0.equalizer == $1.equalizer
             && $0.levelsVolume == $1.levelsVolume }) {

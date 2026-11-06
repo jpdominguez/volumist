@@ -12,7 +12,9 @@ struct DropdownItem {
 /// open, and a click in this popover can do just that, so the app is activated first.
 struct Dropdown: NSViewRepresentable {
     let title: String
-    let items: [DropdownItem]
+    var items: [DropdownItem] = []
+    /// Built each time the menu opens, for lists that change without the view redrawing.
+    var makeItems: (() -> [DropdownItem])?
     var color: NSColor = .labelColor
     var accessibilityLabel: String
 
@@ -20,12 +22,14 @@ struct Dropdown: NSViewRepresentable {
 
     func updateNSView(_ control: Control, context: Context) {
         control.items = items
+        control.makeItems = makeItems
         control.setAccessibilityLabel(accessibilityLabel)
         control.configure(title: title, color: color)
     }
 
     final class Control: NSButton {
         var items: [DropdownItem] = []
+        var makeItems: (() -> [DropdownItem])?
         private(set) var activeMenu: NSMenu?
         private var activationObserver: NSObjectProtocol?
 
@@ -54,7 +58,7 @@ struct Dropdown: NSViewRepresentable {
         func makeMenu() -> NSMenu {
             let menu = NSMenu()
             menu.autoenablesItems = false
-            for item in items {
+            for item in makeItems?() ?? items {
                 if item.isSeparatorBefore { menu.addItem(.separator()) }
                 let entry = NSMenuItem(title: item.title, action: #selector(MenuTarget.run), keyEquivalent: "")
                 let target = MenuTarget(item.action)

@@ -41,6 +41,7 @@ your speakers while Zoom stays in your headphones.
 - **Level meters** that show what each app is playing.
 - **System volume slider**, so everything is in one place.
 - **Per-app output routing**: send each app to a different speaker, monitor or pair of headphones.
+- **Two outputs at once**: play an app on two devices at the same time, such as speakers in two rooms.
 - **Automatic lowering during calls**: music fades down when a call starts and back up when it ends. Choose how far
   it goes, what counts as a call, and which apps are left alone. Off by default.
 - **Automatic fallback**: if a chosen output disconnects, the app moves to the system output and returns when the
@@ -123,8 +124,11 @@ To close the window, click anywhere else or press Escape. Quitting Volumist retu
 - Volumes are per app, not per browser tab.
 - Balance has no effect on mono outputs, such as Bluetooth headphones while their microphone is in use.
 - The 16 kHz equalizer band is skipped on outputs with a low sample rate, such as that same Bluetooth mode.
-- Calls are detected from microphone use, so a muted call still counts, and so does dictating or recording in another
-  app unless you switch to **Known call apps only**. A call in listen-only mode isn't detected.
+- Calls are detected from microphone use, so dictating or recording in another app also counts unless you switch to
+  **Known call apps only**. There you can add more apps, including your browser for calls such as Google Meet. A call
+  in listen-only mode isn't detected.
+- Two outputs are not delayed to match each other, so Bluetooth plays later than wired outputs and you may hear an
+  echo if both are in the same room.
 - Bluetooth headphones switch to a lower-quality mode whenever an app uses their microphone. That is a macOS
   behavior and it applies to the audio Volumist plays too.
 - Volumist uses two private system functions (see [the architecture notes](docs/ARCHITECTURE.md#private-apis)), so

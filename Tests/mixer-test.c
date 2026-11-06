@@ -40,6 +40,40 @@ static double play(VMMixer *m, double rms, double seconds, double measure) {
     return count ? sqrt(energy / count) : 0;
 }
 
+// Plays a stereo sine into outputs with the given channels, and returns each output channel's RMS.
+static void route(VMMixer *m, const UInt32 *channels, UInt32 buffers, double *rms) {
+    static float in[BLOCK * 2], out[2][BLOCK * 4];
+    AudioBufferList *output = calloc(1, sizeof(AudioBufferList) + sizeof(AudioBuffer));
+    output->mNumberBuffers = buffers;
+    UInt32 total = 0;
+    for (UInt32 b = 0; b < buffers; b++) {
+        output->mBuffers[b] = (AudioBuffer){channels[b], BLOCK * channels[b] * (UInt32)sizeof(float), out[b]};
+        total += channels[b];
+    }
+    AudioBufferList input = {1, {{2, sizeof in, in}}};
+    AudioTimeStamp time = {0};
+    double phase = 0;
+    for (UInt32 c = 0; c < total; c++) rms[c] = 0;
+    for (int block = 0; block < 200; block++) {
+        for (int i = 0; i < BLOCK; i++, phase += 2 * M_PI * 440 / RATE) {
+            in[i * 2] = in[i * 2 + 1] = (float)(0.1 * sqrt(2.0) * sin(phase));
+        }
+        vm_ioproc(0, &time, &input, &time, output, &time, m);
+        if (block < 100) continue; // once balance has settled
+        UInt32 channel = 0;
+        for (UInt32 b = 0; b < buffers; b++) {
+            for (UInt32 c = 0; c < channels[b]; c++, channel++) {
+                for (int i = 0; i < BLOCK; i++) {
+                    double x = out[b][i * channels[b] + c];
+                    rms[channel] += x * x;
+                }
+            }
+        }
+    }
+    for (UInt32 c = 0; c < total; c++) rms[c] = sqrt(rms[c] / (100.0 * BLOCK));
+    free(output);
+}
+
 int main(void) {
     VMMixer *m = vm_create(1);
     expect("disabled: passes audio unchanged", play(m, 0.1, 1, 0.5), 0.0999, 0.1001);
@@ -79,6 +113,46 @@ int main(void) {
     play(m, 0.01, 20, 1);
     vm_set_leveler(m, 0, RATE);
     expect("turning it off returns to unity gain", play(m, 0.1, 1, 0.2), 0.0995, 0.1005);
+    vm_destroy(m);
+
+    double rms[6];
+    m = vm_create(1);
+    vm_set_balance(m, -1);
+    route(m, (UInt32[]){2}, 1, rms);
+    expect("stereo, balance left: left plays", rms[0], 0.099, 0.101);
+    expect("stereo, balance left: right is silent", rms[1], 0, 0.001);
+    vm_destroy(m);
+
+    m = vm_create(1);
+    vm_set_balance(m, 1);
+    route(m, (UInt32[]){1}, 1, rms);
+    expect("mono, balance right: the level doesn't change", rms[0], 0.099, 0.101);
+    vm_destroy(m);
+
+    m = vm_create(1);
+    vm_set_balance(m, -1);
+    vm_set_first_output_channels(m, 2);
+    route(m, (UInt32[]){2, 2}, 2, rms);
+    expect("two outputs: first left plays", rms[0], 0.099, 0.101);
+    expect("two outputs: first right is silent", rms[1], 0, 0.001);
+    expect("two outputs: second left plays", rms[2], 0.099, 0.101);
+    expect("two outputs: second right is silent", rms[3], 0, 0.001);
+    vm_destroy(m);
+
+    m = vm_create(1);
+    vm_set_balance(m, 1);
+    vm_set_first_output_channels(m, 1);
+    route(m, (UInt32[]){1, 2}, 2, rms);
+    expect("mono then stereo: mono keeps its level", rms[0], 0.099, 0.101);
+    expect("mono then stereo: left is silent", rms[1], 0, 0.001);
+    expect("mono then stereo: right plays", rms[2], 0.099, 0.101);
+    vm_destroy(m);
+
+    m = vm_create(1);
+    vm_set_first_output_channels(m, 4);
+    route(m, (UInt32[]){4, 2}, 2, rms);
+    expect("four channels: extra channels stay silent", rms[2] + rms[3], 0, 0.001);
+    expect("second output after four channels plays", rms[4], 0.099, 0.101);
     vm_destroy(m);
 
     printf(failures ? "%d FAILED\n" : "All passed\n", failures);

@@ -43,7 +43,7 @@ enum SelfTest {
             guard source != 0 else { throw AudioError("the process has no audio", -1) }
 
             let session = try TapSession(processes: [source], gain: 1)
-            try session.start(outputUID: readString(output, kAudioDevicePropertyDeviceUID)!)
+            try session.start(outputs: [readString(output, kAudioDevicePropertyDeviceUID)!])
             let mine = processObject(ProcessInfo.processInfo.processIdentifier)
             guard mine != 0 else { throw AudioError("Volumist is not listed as an audio process", -1) }
             let uid = readString(output, kAudioDevicePropertyDeviceUID)!
@@ -290,6 +290,21 @@ enum SelfTest {
         snapshot(WhatsNewView(notes: Array(notes.prefix(1))) {}, to: "\(folder)/whats-new.png")
         snapshot(WhatsNewView(notes: notes) {}, to: "\(folder)/whats-new-all.png")
         snapshot(MixerView(engine: engine), to: "\(folder)/mixer.png")
+
+        var app = AudioApp(id: "app", name: "Music", icon: nil, isPlaying: true, volume: 1, isMuted: false,
+                           outputUID: nil, outputName: nil, outputMissing: false)
+        let details = AudioEngine(preview: [app], output: "Headphones", call: nil, expanded: "app", previewLevels: [:])
+        app.secondOutputUID = "External Speakers"
+        app.secondOutputName = "External Speakers"
+        app.mayEcho = true
+        details.setPreview(apps: [app], call: nil, expanded: "app")
+        snapshot(MixerView(engine: details), to: "\(folder)/two-outputs.png")
+        app.secondOutputUID = nil
+        app.mayEcho = false
+        app.isMono = true
+        details.setPreview(apps: [app], call: nil, expanded: "app")
+        details.ducking.trigger = .callApps
+        snapshot(MixerView(engine: details), to: "\(folder)/mono.png")
         exit(0)
     }
 
@@ -349,6 +364,40 @@ enum SelfTest {
             report += "launch screen, \(name): got \(got)\n"
             passed = false
         }
+
+        // Calls: a muted user can release the microphone, and apps can keep playing after a call.
+        var tracker = CallTracker()
+        let start = Date()
+        func call(_ active: (id: String, name: String)?, playing: Bool, at seconds: TimeInterval) -> String? {
+            tracker.update(active: active, isPlaying: { _ in playing }, now: start.addingTimeInterval(seconds))
+        }
+        let teams = (id: "com.microsoft.teams2", name: "Teams"), browser = (id: "com.google.Chrome", name: "Chrome")
+        var callResults: [(String, Bool)] = [
+            ("in a call", call(teams, playing: true, at: 0) == "Teams"),
+            ("muted, still playing", call(nil, playing: true, at: 60) == "Teams" && tracker.sustained == teams.id),
+            ("back on the microphone", call(teams, playing: true, at: 170) == "Teams" && tracker.sustained == nil),
+            ("muted again, the limit restarts", call(nil, playing: true, at: 340) == "Teams"),
+            ("output left open after the limit", call(nil, playing: true, at: 360) == nil),
+        ]
+        tracker = CallTracker()
+        _ = call(teams, playing: true, at: 0)
+        callResults.append(("playback stopped: within grace", call(nil, playing: false, at: 1) == "Teams"))
+        callResults.append(("playback stopped: ended", call(nil, playing: false, at: 3) == nil))
+        tracker = CallTracker()
+        _ = call(browser, playing: true, at: 0)
+        callResults.append(("a browser isn't kept in a call", call(nil, playing: true, at: 3) == nil))
+        var options = DuckingOptions(trigger: .callApps)
+        callResults.append(("known app counts", options.countsAsCallApp(teams.id)))
+        callResults.append(("browser doesn't count", !options.countsAsCallApp(browser.id)))
+        options.extraCallApps = [browser.id: browser.name]
+        callResults.append(("added browser counts", options.countsAsCallApp(browser.id)))
+        let old = #"{"level":0.5,"isEnabled":true,"trigger":"callApps"}"#.data(using: .utf8)!
+        callResults.append(("earlier settings decode", (try? JSONDecoder().decode(DuckingOptions.self, from: old))?.isEnabled == true))
+        for (name, ok) in callResults where !ok {
+            report += "calls, \(name): failed\n"
+            passed = false
+        }
+        report += "calls: \(callResults.filter(\.1).count) of \(callResults.count) passed\n"
 
         let engine = AudioEngine(preview: [], output: "Output", call: nil, expanded: nil, previewLevels: [:])
         let controller = AppController(engine: engine)

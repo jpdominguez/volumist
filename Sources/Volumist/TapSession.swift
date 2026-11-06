@@ -13,8 +13,8 @@ final class TapSession {
     private var procID: AudioDeviceIOProcID?
     private(set) var processes: [AudioObjectID]
 
-    /// The device it is playing through right now, or nil while the I/O is stopped.
-    private(set) var outputUID: String?
+    /// The devices it is playing through right now, none while the I/O is stopped.
+    private(set) var outputs: [String] = []
     private(set) var hasStarted = false
 
     private var equalizer = [Float](repeating: 0, count: Int(VM_EQ_BANDS))
@@ -78,17 +78,22 @@ final class TapSession {
         processes = new
     }
 
-    func start(outputUID: String) throws {
-        if self.outputUID == outputUID { return }
+    /// With two outputs the first one's clock leads, and the second is resampled to follow it.
+    func start(outputs wanted: [String]) throws {
+        guard let main = wanted.first else { return }
+        if outputs == wanted { return }
         stop()
+        let subDevices: [[String: Any]] = wanted.enumerated().map { index, uid in
+            [kAudioSubDeviceUIDKey: uid, kAudioSubDeviceDriftCompensationKey: index > 0]
+        }
         let config: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Volumist",
             kAudioAggregateDeviceUIDKey: "volumist.\(UUID().uuidString)",
-            kAudioAggregateDeviceMainSubDeviceKey: outputUID,
+            kAudioAggregateDeviceMainSubDeviceKey: main,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceIsStackedKey: false,
             kAudioAggregateDeviceTapAutoStartKey: true,
-            kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: outputUID]],
+            kAudioAggregateDeviceSubDeviceListKey: subDevices,
             kAudioAggregateDeviceTapListKey: [[
                 kAudioSubTapUIDKey: tapUID,
                 kAudioSubTapDriftCompensationKey: true,
@@ -102,6 +107,13 @@ final class TapSession {
         setEqualizer(equalizer)
         setLeveler(levels)
 
+        let active = readObjectList(aggregateID, kAudioAggregateDevicePropertyActiveSubDeviceList)
+        guard active.count == wanted.count else {
+            stop()
+            throw AudioError("Could not use every output", -1)
+        }
+        vm_set_first_output_channels(mixer, active.count > 1 ? UInt32(outputChannelCount(active[0])) : 0)
+
         var proc: AudioDeviceIOProcID?
         status = AudioDeviceCreateIOProcID(aggregateID, vm_ioproc, UnsafeMutableRawPointer(mixer), &proc)
         guard status == noErr, let proc else {
@@ -114,12 +126,12 @@ final class TapSession {
             stop()
             throw AudioError("Could not start audio", status)
         }
-        self.outputUID = outputUID
+        outputs = wanted
         hasStarted = true
     }
 
     func stop() {
-        outputUID = nil
+        outputs = []
         if let procID {
             AudioDeviceStop(aggregateID, procID)
             AudioDeviceDestroyIOProcID(aggregateID, procID)
