@@ -111,6 +111,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusItem = item
     }
 
+    /// A new status item takes a moment to reach the menu bar. Until then it sits at the screen's origin.
+    var isMenuBarItemPlaced: Bool { (statusItem?.button?.window?.frame.minY ?? 0) > 0 }
+
     @objc func toggle() {
         if popover.isShown {
             popover.performClose(nil)
@@ -263,8 +266,7 @@ struct MixerView: View {
         }
     }
 
-    /// The screen minus everything else in the window, which grows with what is showing, and a margin:
-    /// on macOS 26 a popover that nearly fills the screen is moved away from the menu bar.
+    /// The screen minus everything else in the window, which grows with what is showing, and a margin.
     private var maxListHeight: CGFloat {
         if engine.showsWholeList { return .infinity }
         var reserved: CGFloat = 290

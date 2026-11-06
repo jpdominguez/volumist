@@ -151,8 +151,6 @@ They are the reason Volumist can't be submitted to the Mac App Store in its curr
 
 ## Known gaps
 
-- On a macOS 26 runner with a very small screen (674 points tall), the window sometimes moved away from the menu bar
-  when opening an app's details. It didn't happen on macOS 15, or on a large screen.
 - Two outputs with different sample rates are untested, including Bluetooth headphones in call mode next to wired
   outputs. If macOS creates the aggregate but plays them badly, Volumist can't detect it.
 - `ci.yml` builds and checks the interface on macOS 15, macOS 26 and Intel, but runners have no audio hardware. Real

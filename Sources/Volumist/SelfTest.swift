@@ -454,6 +454,13 @@ enum SelfTest {
             let controller = AppController(engine: engine)
             controller.install()
             RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            // On a machine with no real menu bar this can take a while, and the window would open
+            // in the corner of the screen and jump to its place, which no user sees.
+            let placementLimit = Date().addingTimeInterval(10)
+            while !controller.isMenuBarItemPlaced, Date() < placementLimit {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            }
+            report += "menu bar item placed: \(controller.isMenuBarItemPlaced)\n"
             controller.toggle()
             RunLoop.main.run(until: Date().addingTimeInterval(0.5))
             guard let window = controller.popover.contentViewController?.view.window else { exit(2) }
