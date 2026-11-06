@@ -104,11 +104,23 @@ compensation. The aggregate's output buffers follow the order of its subdevices,
 the mixer where the second device starts. Both get the same processed audio, and a mono device gets a mix that ignores
 balance. A pair that macOS refuses falls back to the first output, and isn't tried again until the setting changes.
 
+## Sound for each output
+
+With **Remember for each output** on, an app's setting keeps a volume, balance, leveling and equalizer for each output
+it has played on, and notes which output the current values belong to. Every change is written to that output and not
+to the target, because choosing another output must not overwrite what is saved for it. Each `reconcile` pass compares
+it with the target, so the sound also switches when a device connects or disconnects or the system output changes. With
+two outputs, the first one decides.
+
 ## Output volumes
 
 The window has a general volume for each output. Outputs with a volume of their own use it, whether or not they are the
 Mac's current output. For the rest, such as many HDMI monitors, Volumist lowers what it plays there through
 `vm_set_output_gains`, so any app playing on such an output gets a tap while its level is below 100%.
+
+Scrolling over the menu bar icon changes the current output's volume. On macOS 27 the scroll events go to another
+process, not to the status item's window, so a global monitor watches them and acts only when the pointer is over the
+icon. It only reads the direction and amount of the scroll, and no permission is needed for mouse events.
 
 ## Launch screens
 

@@ -36,7 +36,7 @@ your speakers while Zoom stays in your headphones.
 - **Per-app volume**, from 0% to 150%, with a soft limiter above 100% to avoid harsh clipping.
 - **Per-app mute** with one click.
 - **Per-app leveling**: evens out loud and quiet parts, so ads and explosions stop making you jump.
-- **Per-app equalizer**: 10 bands from 31 Hz to 16 kHz, with presets such as Bass Boost and Voice.
+- **Per-app equalizer**: 10 bands from 31 Hz to 16 kHz, with presets such as Bass Boost and Voice, and your own.
 - **Per-app balance** between left and right.
 - **Level meters** that show what each app is playing.
 - **System volume slider**, so everything is in one place.
@@ -44,6 +44,9 @@ your speakers while Zoom stays in your headphones.
 - **Two outputs at once**: play an app on two devices at the same time, such as speakers in two rooms.
 - **Volume for each output**: set every speaker, monitor and pair of headphones separately, even those with no volume
   control of their own.
+- **Sound for each output**: an app can keep its own volume, balance, leveling and equalizer for your headphones and
+  another set for your speakers, and switch by itself.
+- **Scroll over the menu bar icon** to change the volume of the current output.
 - **Automatic lowering during calls**: music fades down when a call starts and back up when it ends. Choose how far
   it goes, what counts as a call, and which apps are left alone. Off by default.
 - **Automatic fallback**: if a chosen output disconnects, the app moves to the system output and returns when the
@@ -106,6 +109,9 @@ Click the menu bar icon to see the apps that are playing audio, plus any app you
 | Sliders button | Opens the app's balance, leveling and equalizer. |
 | Output menu | Picks the device for this app, or **System Output** to follow macOS. |
 | Top slider | Sets the Mac's volume, the same as the keyboard keys. It is hidden for outputs with no volume control. |
+| Menu bar icon | Click to open the window. Scroll over it to change the current output's volume. |
+| Save as Preset | In the equalizer menu, once it matches no preset. Choose your preset to delete it from the same menu. |
+| Remember for each output | In the app's details. Volume, balance, leveling and equalizer then change with the output. |
 | Lower other apps during calls | Turns automatic lowering on or off. |
 | Lower to | How far apps go down during a call, relative to their own volume. |
 | Detect calls from | **Any app using the microphone**, or **Known call apps only**. |
@@ -129,6 +135,7 @@ To close the window, click anywhere else or press Escape. Quitting Volumist retu
 - Calls are detected from microphone use, so dictating or recording in another app also counts unless you switch to
   **Known call apps only**. There you can add more apps, including your browser for calls such as Google Meet. A call
   in listen-only mode isn't detected.
+- With two outputs, the sound remembered for each output follows the first one.
 - Two outputs are not delayed to match each other, so Bluetooth plays later than wired outputs and you may hear an
   echo if both are in the same room.
 - Bluetooth headphones switch to a lower-quality mode whenever an app uses their microphone. That is a macOS

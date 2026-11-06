@@ -308,6 +308,13 @@ enum SelfTest {
         details.setPreview(apps: [app], call: nil, expanded: "app")
         details.ducking.trigger = .callApps
         snapshot(MixerView(engine: details), to: "\(folder)/mono.png")
+        app.isMono = false
+        app.equalizer = [4, 3, 1, 0, 0, 0, 1, 2, 3, 4]
+        app.soundOutputName = "Headphones"
+        details.setPreview(apps: [app], call: nil, expanded: "app")
+        details.namingPresetFor = "app"
+        details.presetDraftName = "Headphones"
+        snapshot(MixerView(engine: details), to: "\(folder)/each-output.png")
         exit(0)
     }
 
@@ -410,6 +417,69 @@ enum SelfTest {
         passed = passed && versionRead
 
         let engine = AudioEngine(preview: [], output: "Output", call: nil, expanded: nil, previewLevels: [:])
+
+        var outputResults = [(String, Bool)]()
+        var setting = AudioEngine.Setting(volume: 0.5, equalizer: Equalizer.presets[1].gains)
+        setting.sounds = [:]
+        setting.soundOutput = "speakers"
+        setting.keepSound()
+        setting.switchSound(to: "headphones")
+        outputResults.append(("new output starts with the current sound", setting.volume == 0.5 && setting.sounds?.count == 2))
+        setting.volume = 0.9
+        setting.equalizer = nil
+        setting.keepSound()
+        setting.outputUID = "speakers"
+        setting.keepSound() // the output changes first, and must not overwrite the next one's sound
+        outputResults.append(("the sound stays with its output", setting.sounds?["speakers"]?.volume == 0.5))
+        setting.switchSound(to: "speakers")
+        outputResults.append(("returns to the saved sound", setting.volume == 0.5 && setting.equalizer == Equalizer.presets[1].gains))
+        setting.switchSound(to: "headphones")
+        outputResults.append(("and back", setting.volume == 0.9 && setting.equalizer == nil))
+        setting = AudioEngine.Setting()
+        setting.sounds = [:]
+        outputResults.append(("default sound is kept while remembering", !setting.isEmpty && setting.usesDefaultAudio))
+        let earlier = #"{"volume":0.5,"isMuted":false}"#.data(using: .utf8)!
+        outputResults.append(("earlier settings decode", (try? JSONDecoder().decode(AudioEngine.Setting.self, from: earlier))?.sounds == nil))
+        for (name, ok) in outputResults where !ok {
+            report += "outputs, \(name): failed\n"
+            passed = false
+        }
+        report += "sound for each output: \(outputResults.filter(\.1).count) of \(outputResults.count) passed\n"
+
+        var presetResults = [(String, Bool)]()
+        let gains = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10.0]
+        presetResults.append(("empty name refused", !engine.canSavePreset(named: "   ")))
+        presetResults.append(("built-in name refused", !engine.canSavePreset(named: "bass boost")))
+        engine.savePreset(named: " Mine ", gains: gains)
+        presetResults.append(("saved and found", engine.presetName(for: gains) == "Mine"))
+        engine.savePreset(named: "mine", gains: Equalizer.presets[2].gains.map { $0 + 1 })
+        presetResults.append(("same name replaces", engine.savedPresets.count == 1 && engine.presetName(for: gains) == nil))
+        presetResults.append(("built-in wins", engine.presetName(for: Equalizer.flat) == "Flat"))
+        engine.deletePreset(named: "mine")
+        presetResults.append(("deleted", engine.savedPresets.isEmpty))
+        for (name, ok) in presetResults where !ok {
+            report += "presets, \(name): failed\n"
+            passed = false
+        }
+        report += "equalizer presets: \(presetResults.filter(\.1).count) of \(presetResults.count) passed\n"
+
+        var scrollResults = [(String, Bool)]()
+        var scroll = ScrollVolume()
+        func close(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 0.0001 }
+        scrollResults.append(("a wheel notch is one step", close(scroll.change(delta: 1, isPrecise: false, isInverted: false), 0.02)))
+        scrollResults.append(("up is louder when inverted", close(scroll.change(delta: -1, isPrecise: false, isInverted: true), 0.02)))
+        scrollResults.append(("down is quieter", close(scroll.change(delta: -1, isPrecise: false, isInverted: false), -0.02)))
+        var total = 0.0
+        for _ in 0..<50 { total += scroll.change(delta: 1, isPrecise: true, isInverted: false) }
+        scrollResults.append(("small movements add up", close(total, 0.1)))
+        _ = scroll.change(delta: 9, isPrecise: true, isInverted: false)
+        scrollResults.append(("turning back starts over", scroll.change(delta: -1, isPrecise: true, isInverted: false) == 0))
+        for (name, ok) in scrollResults where !ok {
+            report += "scroll, \(name): failed\n"
+            passed = false
+        }
+        report += "scrolling: \(scrollResults.filter(\.1).count) of \(scrollResults.count) passed\n"
+
         let controller = AppController(engine: engine)
         controller.install()
         func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.4)) }

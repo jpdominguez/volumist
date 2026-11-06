@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0
+
+- Scroll over the menu bar icon to change the volume of the Mac's current output.
+- Save your own equalizer presets, and use them with any app.
+- Remember an app's volume, balance, leveling and equalizer for each output, from the app's details.
+
 ## 1.3.2
 
 - Fixed the update check failing on shared networks, such as universities and offices.

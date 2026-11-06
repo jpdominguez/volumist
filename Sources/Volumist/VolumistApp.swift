@@ -50,6 +50,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var outsideClickMonitor: Any?
     private var escapeMonitor: Any?
     private var resignObserver: NSObjectProtocol?
+    private var scrollMonitors: [Any?] = []
+    private var scrollVolume = ScrollVolume()
     private var lastClose = Date.distantPast
     private let launchScreen: LaunchScreen
     private(set) var screenWindow: NSWindow?
@@ -115,6 +117,26 @@ final class AppController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         item.button?.target = self
         item.button?.action = #selector(toggle)
         statusItem = item
+
+        // On macOS 27 scrolling over the icon goes to another process, so only a global monitor sees it.
+        scrollMonitors = [
+            NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                MainActor.assumeIsolated { self?.scrolled(event) }
+            },
+            NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                MainActor.assumeIsolated { self?.scrolled(event) }
+                return event
+            },
+        ]
+    }
+
+    /// Scrolling over the menu bar icon changes the volume of the Mac's current output.
+    private func scrolled(_ event: NSEvent) {
+        guard statusItem?.button?.window?.frame.contains(NSEvent.mouseLocation) == true,
+              event.momentumPhase.isEmpty else { return } // momentum would go on after the fingers lift
+        let change = scrollVolume.change(delta: event.scrollingDeltaY, isPrecise: event.hasPreciseScrollingDeltas,
+                                         isInverted: event.isDirectionInvertedFromDevice)
+        if change != 0 { engine.nudgeSystemOutput(by: change) }
     }
 
     /// A new status item takes a moment to reach the menu bar. Until then it sits at the screen's origin.
@@ -445,6 +467,7 @@ struct AppRow: View {
 
     private var isCustomized: Bool {
         app.balance != 0 || app.equalizer != Equalizer.flat || app.levelsVolume || app.secondOutputUID != nil
+            || app.soundOutputName != nil
     }
 
     private var statusText: String {
@@ -510,8 +533,37 @@ struct AppDetails: View {
     let app: AudioApp
     @ObservedObject var engine: AudioEngine
 
-    private var presetName: String {
-        Equalizer.presets.first { $0.gains == app.equalizer }?.name ?? "Custom"
+    private var presetItems: [DropdownItem] {
+        var items = Equalizer.presets.map { preset in
+            DropdownItem(title: preset.name, isSelected: preset.gains == app.equalizer) {
+                engine.setEqualizer(preset.gains, for: app.id)
+            }
+        }
+        for (index, preset) in engine.savedPresets.enumerated() {
+            items.append(DropdownItem(title: preset.name, isSelected: preset.gains == app.equalizer,
+                                      isSeparatorBefore: index == 0) {
+                engine.setEqualizer(preset.gains, for: app.id)
+            })
+        }
+        if let name = engine.presetName(for: app.equalizer) {
+            if engine.savedPresets.contains(where: { $0.name == name }) {
+                items.append(DropdownItem(title: "Delete “\(name)”", isSeparatorBefore: true) {
+                    engine.deletePreset(named: name)
+                })
+            }
+        } else {
+            items.append(DropdownItem(title: "Save as Preset…", isSeparatorBefore: true) {
+                engine.presetDraftName = ""
+                engine.namingPresetFor = app.id
+            })
+        }
+        return items
+    }
+
+    private func savePreset() {
+        guard engine.canSavePreset(named: engine.presetDraftName) else { return }
+        engine.savePreset(named: engine.presetDraftName, gains: app.equalizer)
+        engine.namingPresetFor = nil
     }
 
     private var secondOutputLabel: String {
@@ -578,15 +630,34 @@ struct AppDetails: View {
                 .font(.caption)
                 .accessibilityLabel("Level loud and quiet parts of \(app.name)")
 
+            Toggle("Remember for each output", isOn: Binding(get: { app.soundOutputName != nil },
+                                                             set: { engine.setRemembersOutputs($0, for: app.id) }))
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+                .font(.caption)
+                .accessibilityLabel("Remember the sound of \(app.name) for each output")
+            if let output = app.soundOutputName {
+                note("Volume, balance, leveling and equalizer change with the output. Now adjusting \(output).")
+            }
+
             HStack {
                 Text("Equalizer").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Dropdown(title: presetName, items: Equalizer.presets.map { preset in
-                    DropdownItem(title: preset.name, isSelected: preset.gains == app.equalizer) {
-                        engine.setEqualizer(preset.gains, for: app.id)
-                    }
-                }, accessibilityLabel: "Equalizer preset of \(app.name)")
+                Dropdown(title: engine.presetName(for: app.equalizer) ?? "Custom", items: presetItems,
+                         accessibilityLabel: "Equalizer preset of \(app.name)")
                 .fixedSize()
+            }
+
+            if engine.namingPresetFor == app.id {
+                HStack(spacing: 6) {
+                    TextField("Preset name", text: $engine.presetDraftName)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(savePreset)
+                    Button("Save", action: savePreset)
+                        .disabled(!engine.canSavePreset(named: engine.presetDraftName))
+                    Button("Cancel") { engine.namingPresetFor = nil }
+                }
+                .controlSize(.small)
             }
 
             HStack(alignment: .top, spacing: 2) {

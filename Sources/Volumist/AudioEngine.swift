@@ -26,6 +26,7 @@ struct AudioApp: Identifiable {
     var balance = 0.0        // -1 left, 1 right
     var equalizer = Equalizer.flat
     var levelsVolume = false // automatic leveling of loud and quiet passages
+    var soundOutputName: String? // remembers its sound for each output, and this is the current one
 }
 
 /// Levels change many times per second, so they live apart to redraw only the meters.
@@ -46,6 +47,28 @@ enum Equalizer {
         ("Treble Boost", [0, 0, 0, 0, 0, 1, 3, 4, 6, 7]),
         ("Loudness", [6, 5, 2, 0, -1, 0, 0, 1, 4, 5]),
     ]
+}
+
+struct EqualizerPreset: Codable, Equatable {
+    var name: String
+    var gains: [Double]
+}
+
+/// Turns scrolling over the menu bar icon into volume steps, so that a trackpad's many small
+/// movements add up and aren't lost to outputs that round their volume.
+struct ScrollVolume {
+    static let step = 0.02
+    private var pending = 0.0
+
+    /// Up is louder with any scrolling direction setting.
+    mutating func change(delta: Double, isPrecise: Bool, isInverted: Bool) -> Double {
+        let movement = (isInverted ? -delta : delta) * (isPrecise ? 0.002 : Self.step)
+        if movement * pending < 0 { pending = 0 } // changed direction
+        pending += movement
+        let steps = (pending / Self.step).rounded(.towardZero)
+        pending -= steps * Self.step
+        return steps * Self.step
+    }
 }
 
 /// Lowers other apps while a call is in progress.
@@ -120,6 +143,10 @@ final class AudioEngine: ObservableObject {
     /// The result of the Check Now button, shown until the window closes.
     @Published private(set) var updateCheckMessage: String?
     @Published var expandedApp: String?
+    @Published private(set) var savedPresets: [EqualizerPreset] = []
+    /// The app whose equalizer is being saved as a preset, and the name typed so far.
+    @Published var namingPresetFor: String?
+    @Published var presetDraftName = ""
     @Published private(set) var systemVolume: Double?
     @Published private(set) var outputLevels: [OutputLevel] = []
     @Published var listHeight: CGFloat = 0
@@ -151,7 +178,14 @@ final class AudioEngine: ObservableObject {
         var isPlaying = false
         var usesMicrophone = false
     }
-    private struct Setting: Codable {
+    /// What suits one output and not another. Mute is left out: it isn't about how something sounds.
+    struct Sound: Codable, Equatable {
+        var volume = 1.0
+        var balance: Double?
+        var equalizer: [Double]?
+        var levelsVolume: Bool?
+    }
+    struct Setting: Codable {
         var volume = 1.0
         var isMuted = false
         var outputUID: String?
@@ -163,13 +197,38 @@ final class AudioEngine: ObservableObject {
         var balance: Double?
         var equalizer: [Double]?
         var levelsVolume: Bool?
+        var sounds: [String: Sound]? // by device UID. Nil: the same sound everywhere.
+        var soundOutput: String?     // the output that the sound above belongs to
         var usesDefaultAudio: Bool {
             volume == 1 && !isMuted && outputUID == nil && secondOutputUID == nil && balance == nil
                 && equalizer == nil && levelsVolume == nil
         }
         var eqGains: [Float] { (equalizer ?? Equalizer.flat).map(Float.init) }
-        var isEmpty: Bool { usesDefaultAudio && neverLower != true }
+        var isEmpty: Bool { usesDefaultAudio && neverLower != true && sounds == nil }
         var gain: Float { isMuted ? 0 : Float(volume * volume) } // perceptual curve
+
+        var sound: Sound {
+            get { Sound(volume: volume, balance: balance, equalizer: equalizer, levelsVolume: levelsVolume) }
+            set {
+                volume = newValue.volume
+                balance = newValue.balance
+                equalizer = newValue.equalizer
+                levelsVolume = newValue.levelsVolume
+            }
+        }
+
+        /// Writes the sound down for the output it was set on, which may no longer be the target.
+        mutating func keepSound() {
+            let current = sound
+            if let soundOutput { sounds?[soundOutput] = current }
+        }
+
+        /// An output heard for the first time starts with the sound that was playing.
+        mutating func switchSound(to output: String) {
+            let current = sound
+            if let saved = sounds?[output] { sound = saved } else { sounds?[output] = current }
+            soundOutput = output
+        }
     }
 
     private var settings: [String: Setting] = [:]
@@ -201,6 +260,7 @@ final class AudioEngine: ObservableObject {
     private let settingsKey = "volumes"
     private let duckingKey = "ducking"
     private let updatesKey = "checksForUpdates"
+    private let presetsKey = "equalizerPresets"
 
     /// Sample state for rendering the UI, with no audio side effects.
     init(preview apps: [AudioApp], output: String, call: String?, expanded: String?, previewLevels: [String: Float],
@@ -265,6 +325,10 @@ final class AudioEngine: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: outputLevelsKey),
            let saved = try? JSONDecoder().decode([String: Double].self, from: data) {
             softwareLevels = saved
+        }
+        if let data = UserDefaults.standard.data(forKey: presetsKey),
+           let saved = try? JSONDecoder().decode([EqualizerPreset].self, from: data) {
+            savedPresets = saved.filter { $0.gains.count == Equalizer.bandCount }
         }
         _checksForUpdates = Published(initialValue: UserDefaults.standard.bool(forKey: updatesKey))
         if checksForUpdates { checkForUpdates() }
@@ -337,6 +401,12 @@ final class AudioEngine: ObservableObject {
         reconcile()
     }
 
+    /// For scrolling over the menu bar icon.
+    func nudgeSystemOutput(by change: Double) {
+        guard let output = outputLevels.first(where: \.isCurrent) else { return }
+        setOutputVolume(min(max(output.volume + change, 0), 1), for: output.id)
+    }
+
     /// What can be added as a call app: open apps, plus those already added.
     func callAppCandidates() -> [(id: String, name: String)] {
         var found = ducking.extraCallApps ?? [:]
@@ -362,6 +432,44 @@ final class AudioEngine: ObservableObject {
 
     func setEqualizer(_ gains: [Double], for id: String) {
         change(id) { $0.equalizer = gains == Equalizer.flat ? nil : gains }
+    }
+
+    func setRemembersOutputs(_ enabled: Bool, for id: String) {
+        let output = targetOutput(for: settings[id] ?? Setting())
+        change(id) {
+            $0.sounds = enabled ? [:] : nil
+            $0.soundOutput = enabled ? output : nil
+        }
+    }
+
+    func presetName(for gains: [Double]) -> String? {
+        Equalizer.presets.first { $0.gains == gains }?.name ?? savedPresets.first { $0.gains == gains }?.name
+    }
+
+    func canSavePreset(named name: String) -> Bool {
+        let name = name.trimmingCharacters(in: .whitespaces)
+        return !name.isEmpty && !Equalizer.presets.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    /// A name already in use is replaced, as saving over a file would.
+    func savePreset(named name: String, gains: [Double]) {
+        guard canSavePreset(named: name) else { return }
+        let name = name.trimmingCharacters(in: .whitespaces)
+        savedPresets.removeAll { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        savedPresets.append(EqualizerPreset(name: name, gains: gains))
+        savedPresets.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        savePresets()
+    }
+
+    /// Apps using it keep their equalizer, which simply becomes custom again.
+    func deletePreset(named name: String) {
+        savedPresets.removeAll { $0.name == name }
+        savePresets()
+    }
+
+    private func savePresets() {
+        guard !isPreview, let data = try? JSONEncoder().encode(savedPresets) else { return }
+        UserDefaults.standard.set(data, forKey: presetsKey)
     }
 
     func reset(_ id: String) {
@@ -397,6 +505,7 @@ final class AudioEngine: ObservableObject {
         } else {
             levels.levels = [:]
             updateCheckMessage = nil
+            namingPresetFor = nil
         }
         reconcile()
     }
@@ -442,15 +551,34 @@ final class AudioEngine: ObservableObject {
     private func change(_ id: String, _ edit: (inout Setting) -> Void) {
         var setting = settings[id] ?? Setting()
         edit(&setting)
+        setting.keepSound()
         settings[id] = setting.isEmpty ? nil : setting
         failedOutputs[id] = nil
         lastChange[id] = Date()
         save()
+        applySound(setting, to: id)
+        reconcile()
+    }
+
+    private func applySound(_ setting: Setting, to id: String) {
         sessions[id]?.setGain(gain(for: setting, lowered: lowered.contains(id)))
         sessions[id]?.setBalance(Float(setting.balance ?? 0))
         sessions[id]?.setEqualizer(setting.eqGains)
         sessions[id]?.setLeveler(setting.levelsVolume == true)
-        reconcile()
+    }
+
+    /// Runs on every pass because an app's output also changes by itself, when a device connects
+    /// or disconnects or the system output changes.
+    private func switchSounds() {
+        var switched = false
+        for (id, var setting) in settings where setting.sounds != nil {
+            guard let output = targetOutput(for: setting), output != setting.soundOutput else { continue }
+            setting.switchSound(to: output)
+            settings[id] = setting
+            applySound(setting, to: id)
+            switched = true
+        }
+        if switched { save() }
     }
 
     private func save() {
@@ -465,6 +593,7 @@ final class AudioEngine: ObservableObject {
         permission = AudioPermission.state
         refreshDevices()
         refreshGroups()
+        switchSounds()
 
         let now = Date()
         for (id, group) in groups where group.isPlaying { lastPlayed[id] = now }
@@ -751,7 +880,9 @@ final class AudioEngine: ObservableObject {
                             mayEcho: targets.count > 1 && targets.contains(where: \.isBluetooth),
                             neverLower: setting.neverLower == true, isLowered: lowered.contains(id),
                             balance: setting.balance ?? 0, equalizer: setting.equalizer ?? Equalizer.flat,
-                            levelsVolume: setting.levelsVolume == true)
+                            levelsVolume: setting.levelsVolume == true,
+                            soundOutputName: setting.sounds == nil ? nil
+                                : devices.first { $0.id == setting.soundOutput }?.name ?? "this output")
         }
         // Alphabetical only: if rows moved when an app started or stopped playing, they could
         // slip out from under the pointer in the middle of a click.
@@ -766,7 +897,7 @@ final class AudioEngine: ObservableObject {
             && $0.secondOutputFailed == $1.secondOutputFailed && $0.isMono == $1.isMono && $0.mayEcho == $1.mayEcho
             && $0.neverLower == $1.neverLower && $0.isLowered == $1.isLowered
             && $0.balance == $1.balance && $0.equalizer == $1.equalizer
-            && $0.levelsVolume == $1.levelsVolume }) {
+            && $0.levelsVolume == $1.levelsVolume && $0.soundOutputName == $1.soundOutputName }) {
             apps = sorted
         }
     }
