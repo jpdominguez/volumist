@@ -121,6 +121,7 @@ final class AudioEngine: ObservableObject {
     @Published private(set) var systemVolume: Double?
     @Published private(set) var outputLevels: [OutputLevel] = []
     @Published var listHeight: CGFloat = 0
+    var showsWholeList = false // for images, which shouldn't depend on this Mac's screen
     @Published var checksForUpdates = false {
         didSet {
             UserDefaults.standard.set(checksForUpdates, forKey: updatesKey)
@@ -221,6 +222,11 @@ final class AudioEngine: ObservableObject {
         })
         levels.levels = previewLevels
         permission = .granted
+    }
+
+    func setPreview(outputVolume volume: Double, for uid: String) {
+        guard isPreview, let index = outputLevels.firstIndex(where: { $0.id == uid }) else { return }
+        outputLevels[index].volume = volume
     }
 
     func setPreview(permission: AudioPermission.State) {

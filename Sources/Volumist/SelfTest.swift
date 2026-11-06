@@ -252,22 +252,24 @@ enum SelfTest {
         _ = NSApplication.shared
         func row(_ name: String, _ path: String, _ volume: Double, muted: Bool = false, output: String? = nil,
                  lowered: Bool = false, neverLower: Bool = false, equalizer: [Double] = Equalizer.flat,
-                 balance: Double = 0) -> AudioApp {
+                 balance: Double = 0, secondOutput: String? = nil) -> AudioApp {
             // The bundle's own icon: NSWorkspace would return it tinted if the system icon style is.
             let file = Bundle(path: path)?.object(forInfoDictionaryKey: "CFBundleIconFile") as? String
             let icon = file.flatMap { NSImage(contentsOfFile: "\(path)/Contents/Resources/\(($0 as NSString).deletingPathExtension).icns") }
             return AudioApp(id: name, name: name, icon: icon ?? NSWorkspace.shared.icon(forFile: path), isPlaying: true,
                      volume: volume, isMuted: muted, outputUID: output, outputName: output, outputMissing: false,
+                            secondOutputUID: secondOutput, secondOutputName: secondOutput,
                             neverLower: neverLower, isLowered: lowered, balance: balance, equalizer: equalizer)
         }
         let engine = AudioEngine(preview: [
             row("Spotify", "/Applications/Spotify.app", 0.8, output: "External Speakers", lowered: true,
-                equalizer: Equalizer.presets[1].gains, balance: -0.2),
+                equalizer: Equalizer.presets[1].gains, balance: -0.2, secondOutput: "Display Audio"),
             row("VLC", "/Applications/VLC.app", 1),
             row("Zoom", "/Applications/zoom.us.app", 1.25, neverLower: true),
             row("Discord", "/Applications/Discord.app", 0.8, muted: true),
         ], output: "Headphones", call: "Zoom", expanded: "Spotify",
            previewLevels: ["Spotify": 0.12, "VLC": 0.4, "Zoom": 0.6])
+        engine.showsWholeList = true
 
         snapshot(MixerView(engine: engine), to: path)
         exit(0)

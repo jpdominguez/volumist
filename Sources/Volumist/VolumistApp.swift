@@ -266,6 +266,7 @@ struct MixerView: View {
     /// The screen minus everything else in the window, which grows with what is showing, and a margin:
     /// on macOS 26 a popover that nearly fills the screen is moved away from the menu bar.
     private var maxListHeight: CGFloat {
+        if engine.showsWholeList { return .infinity }
         var reserved: CGFloat = 290
         reserved += engine.outputLevels.count > 1 ? CGFloat(engine.outputLevels.count) * 22 : 30
         if engine.ducking.isEnabled { reserved += 55 }

@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" width="480" alt="Animated demo of Volumist: Spotify and VLC lower themselves when a Zoom call starts, return when it ends, and Spotify's balance, leveling and equalizer are adjusted">
+  <img src="docs/demo.gif" width="480" alt="Animated demo of Volumist: Spotify and VLC lower themselves when a Zoom call starts, return when it ends, Spotify's balance, leveling and equalizer are adjusted, an output's volume is changed and Spotify is sent to a second output">
   <br><sub>The real interface, animated with sample data.</sub>
 </p>
 
@@ -95,7 +95,7 @@ open build/Volumist.app
 Click the menu bar icon to see the apps that are playing audio, plus any app you have already adjusted.
 
 <p align="center">
-  <img src="docs/screenshot.png" width="340" alt="Volumist menu bar window with separate volume sliders and output pickers for Spotify, VLC, Zoom and Discord">
+  <img src="docs/screenshot.png" width="340" alt="Volumist menu bar window with a volume for each output, and separate volume sliders and output pickers for Spotify, VLC, Zoom and Discord">
 </p>
 
 | Control | What it does |

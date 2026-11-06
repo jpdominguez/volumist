@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// for the README. It doesn't touch audio: what it shows is scripted, not a recording.
 enum DemoRenderer {
     private static let fps = 15.0
-    private static let duration = 31.0
+    private static let duration = 43.0
     private static let zoom: CGFloat = 2
     private static let canvas = CGSize(width: 720, height: 700)
     private static var viewport: CGFloat { canvas.height / zoom }
@@ -24,26 +24,32 @@ enum DemoRenderer {
         case ..<13: "A call starts: the others fade down"
         case ..<17: "The call ends: they come back"
         case ..<23: "Even out loud and quiet parts"
-        default: "Shape the sound of each app"
+        case ..<31: "Shape the sound of each app"
+        case ..<36.5: "Set a volume for each output"
+        default: "Play an app on two outputs"
         }
     }
 
     /// Where the camera looks, in points from the top of the window.
     private static func focus(at time: Double) -> CGFloat {
         switch time {
-        case ..<8.5: 165
-        case ..<17: 315
+        case ..<8.5: 209
+        case ..<17: 359
+        case ..<31: 368
+        case ..<36.5: 100
         default: 300
         }
     }
 
     /// The pointer's path: time, x, y, in window points.
     private static let pointerPath: [(time: Double, x: CGFloat, y: CGFloat)] = [
-        (0, 300, 60), (1.2, 225, 175), (2, 225, 175), (4, 156, 175), (5, 156, 175),
-        (6.3, 334, 97), (8, 334, 97), (9.5, 200, 330), (15.5, 200, 330),
-        (17.8, 334, 190), (19.5, 334, 190), (20.8, 38, 255), (23, 38, 255),
-        (24.3, 312, 279), (25.3, 312, 279), (26, 270, 331), (26.8, 270, 331), (28, 201, 220), (28.5, 201, 220),
-        (29.5, 159, 220), (31, 159, 220),
+        (0, 300, 104), (1.2, 225, 219), (2, 225, 219), (4, 156, 219), (5, 156, 219),
+        (6.3, 334, 141), (8, 334, 141), (9.5, 200, 374), (15.5, 200, 374),
+        (17.8, 334, 234), (19.5, 334, 234), (20.8, 38, 323), (23, 38, 323),
+        (24.3, 312, 347), (25.3, 312, 347), (26, 270, 399), (26.8, 270, 399), (28, 201, 298), (28.5, 201, 298),
+        (29.5, 159, 298), (31, 159, 298),
+        (32.3, 267, 72), (33, 267, 72), (35, 199, 72), (36.5, 199, 72),
+        (38, 315, 273), (38.7, 315, 273), (39.3, 265, 350), (39.7, 265, 350), (43, 265, 350),
     ]
 
     private static func pointer(at time: Double) -> CGPoint {
@@ -51,16 +57,25 @@ enum DemoRenderer {
             let t = eased(time, from: start.time, to: end.time)
             return CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)
         }
-        return CGPoint(x: 159, y: 220)
+        return CGPoint(x: 265, y: 350)
     }
 
-    private static let clicks = [6.9, 18.5, 21.6, 25, 26.4]
+    private static let clicks = [6.9, 18.5, 21.6, 25, 26.4, 38.7, 39.7]
 
-    // The equalizer's dropdown. A real menu can't be captured here, so it is drawn to look the same.
-    private static let menuOpens = 25.0
-    private static let menuCloses = 26.4
-    private static let menuFrame = CGRect(x: 198, y: 292, width: 150, height: 144)
+    // A real menu can't be captured here, so the dropdowns are drawn to look the same.
+    private struct Menu {
+        let opens: Double
+        let closes: Double
+        let frame: CGRect
+        let titles: [String]
+    }
     private static let menuRowHeight: CGFloat = 22
+    private static let menus = [
+        Menu(opens: 25, closes: 26.4, frame: CGRect(x: 198, y: 360, width: 150, height: 144),
+             titles: Equalizer.presets.map(\.name)),
+        Menu(opens: 38.7, closes: 39.7, frame: CGRect(x: 198, y: 289, width: 150, height: 78),
+             titles: ["No other output", "Display Audio", "Headphones"]),
+    ]
 
     private static func icon(_ path: String) -> NSImage {
         let file = Bundle(path: path)?.object(forInfoDictionaryKey: "CFBundleIconFile") as? String
@@ -77,13 +92,15 @@ enum DemoRenderer {
                      "VLC": icon("/Applications/VLC.app"), "Zoom": icon("/Applications/zoom.us.app")]
         func app(_ name: String, _ volume: Double, playing: Bool, muted: Bool = false, output: String? = nil,
                  lowered: Bool = false, balance: Double = 0, equalizer: [Double] = Equalizer.flat,
-                 leveling: Bool = false, neverLower: Bool = false) -> AudioApp {
+                 leveling: Bool = false, neverLower: Bool = false, second: String? = nil) -> AudioApp {
             AudioApp(id: name, name: name, icon: icons[name], isPlaying: playing, volume: volume, isMuted: muted,
-                     outputUID: output, outputName: output, outputMissing: false, neverLower: neverLower, isLowered: lowered,
+                     outputUID: output, outputName: output, outputMissing: false,
+                     secondOutputUID: second, secondOutputName: second, neverLower: neverLower, isLowered: lowered,
                      balance: balance, equalizer: equalizer, levelsVolume: leveling)
         }
 
         let engine = AudioEngine(preview: [], output: "Headphones", call: nil, expanded: nil, previewLevels: [:])
+        engine.showsWholeList = true
         let view = NSHostingView(rootView: MixerView(engine: engine)
             .background(Color(nsColor: .windowBackgroundColor)))
         view.appearance = NSAppearance(named: .aqua)
@@ -110,7 +127,7 @@ enum DemoRenderer {
             camera += (focus(at: time) - camera) * 0.07
 
             let volume = 1 - 0.45 * eased(time, from: 2, to: 4)
-            let equalizer = time >= menuCloses ? Equalizer.presets[1].gains : Equalizer.flat
+            let equalizer = time >= menus[0].closes ? Equalizer.presets[1].gains : Equalizer.flat
             let balance = -0.35 * eased(time, from: 28.5, to: 29.5)
             let leveling = time >= 21.6
             let musicMuted = time >= 6.9
@@ -123,10 +140,11 @@ enum DemoRenderer {
                 app("Music", 0.8, playing: !musicMuted, muted: musicMuted, lowered: false),
                 app("Spotify", volume, playing: true,
                     output: "External Speakers", lowered: inCall, balance: balance,
-                    equalizer: equalizer, leveling: leveling),
+                    equalizer: equalizer, leveling: leveling, second: time >= menus[1].closes ? "Headphones" : nil),
                 app("VLC", 0.6, playing: true, lowered: inCall),
                 app("Zoom", 1, playing: inCall, neverLower: true),
             ], call: inCall ? "Zoom" : nil, expanded: time >= 18.5 ? "Spotify" : nil)
+            engine.setPreview(outputVolume: 0.8 - 0.45 * eased(time, from: 33, to: 35), for: "External Speakers")
             engine.levels.levels = ["Music": Float(podcast), "Spotify": Float(spotifyLevel),
                                     "VLC": Float(video), "Zoom": Float(voice)]
 
@@ -136,7 +154,7 @@ enum DemoRenderer {
             guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds),
                   let image = compose(panel: bitmap, view: view, camera: camera, time: time) else { exit(1) }
             CGImageDestinationAddImage(destination, image, frameProperties)
-            if let keyFrames, frame % 75 == 40 || frame == 385 || frame == 392 {
+            if let keyFrames, frame % 75 == 40 || frame == 385 || frame == 392 || frame == 435 || frame == 575 || frame == 590 || frame == 610 {
                 let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
                 try? data?.write(to: URL(fileURLWithPath: "\(keyFrames)/frame-\(frame).png"))
             }
@@ -166,7 +184,8 @@ enum DemoRenderer {
         context.draw(panel, in: CGRect(x: 0, y: canvas.height - (size.height - top) * zoom,
                                        width: size.width * zoom, height: size.height * zoom))
 
-        if time >= menuOpens && time < menuCloses {
+        if let menu = menus.first(where: { time >= $0.opens && time < $0.closes }) {
+            let menuFrame = menu.frame
             let origin = point(menuFrame.minX, menuFrame.maxY)
             let rect = NSRect(x: origin.x, y: origin.y, width: menuFrame.width * zoom, height: menuFrame.height * zoom)
             let shadow = NSShadow()
@@ -180,7 +199,7 @@ enum DemoRenderer {
             NSGraphicsContext.restoreGraphicsState()
 
             let hovered = pointer(at: time)
-            for (index, preset) in Equalizer.presets.enumerated() {
+            for (index, title) in menu.titles.enumerated() {
                 let rowTop = menuFrame.minY + 6 + CGFloat(index) * menuRowHeight
                 let isHovered = hovered.y >= rowTop && hovered.y < rowTop + menuRowHeight
                     && hovered.x >= menuFrame.minX && hovered.x < menuFrame.maxX
@@ -193,7 +212,7 @@ enum DemoRenderer {
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 25), .foregroundColor: isHovered ? NSColor.white : NSColor.black]
                 if index == 0 { ("✓" as NSString).draw(at: NSPoint(x: bottom.x + 10, y: bottom.y + 7), withAttributes: attributes) }
-                (preset.name as NSString).draw(at: NSPoint(x: bottom.x + 42, y: bottom.y + 7), withAttributes: attributes)
+                (title as NSString).draw(at: NSPoint(x: bottom.x + 42, y: bottom.y + 7), withAttributes: attributes)
             }
         }
 
