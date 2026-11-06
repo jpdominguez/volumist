@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+
+- A Check Now button, to look for a new version at any time.
+
 ## 1.3.0
 
 - A welcome screen on first launch, which explains the audio permission and the main options.

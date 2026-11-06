@@ -8,6 +8,12 @@ enum Entry {
             SelfTest.run(arguments: Array(CommandLine.arguments[(index + 1)...]))
         } else if let index = CommandLine.arguments.firstIndex(of: "--render-preview") {
             MainActor.assumeIsolated { SelfTest.renderPreview(to: CommandLine.arguments[index + 1]) }
+        } else if CommandLine.arguments.contains("--check-updates") {
+            Task {
+                print(await UpdateChecker.check())
+                exit(0)
+            }
+            RunLoop.main.run()
         } else if let index = CommandLine.arguments.firstIndex(of: "--render-screens") {
             MainActor.assumeIsolated { SelfTest.renderScreens(to: CommandLine.arguments[index + 1]) }
         } else if let index = CommandLine.arguments.firstIndex(of: "--render-demo") {
@@ -231,9 +237,18 @@ struct MixerView: View {
 
             Divider()
 
-            Toggle("Check for updates", isOn: $engine.checksForUpdates)
-                .toggleStyle(.checkbox)
-                .controlSize(.small)
+            HStack {
+                Toggle("Check for updates", isOn: $engine.checksForUpdates)
+                    .toggleStyle(.checkbox)
+                Spacer()
+                Button("Check Now") { engine.checkForUpdatesNow() }
+                    .disabled(engine.updateCheckMessage == "Checking…")
+            }
+            .controlSize(.small)
+
+            if let message = engine.updateCheckMessage {
+                Text(message).font(.caption).foregroundStyle(.secondary)
+            }
 
             HStack {
                 Toggle("Open at login", isOn: $engine.launchAtLogin)

@@ -291,6 +291,7 @@ enum SelfTest {
         snapshot(WelcomeView(engine: engine) {}, to: "\(folder)/welcome-granted.png")
         snapshot(WhatsNewView(notes: Array(notes.prefix(1))) {}, to: "\(folder)/whats-new.png")
         snapshot(WhatsNewView(notes: notes) {}, to: "\(folder)/whats-new-all.png")
+        engine.setPreview(updateCheckMessage: "Volumist \(UpdateChecker.currentVersion) is the latest version.")
         snapshot(MixerView(engine: engine), to: "\(folder)/mixer.png")
 
         var app = AudioApp(id: "app", name: "Music", icon: nil, isPlaying: true, volume: 1, isMuted: false,

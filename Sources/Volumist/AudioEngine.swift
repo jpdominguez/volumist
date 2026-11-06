@@ -117,6 +117,8 @@ final class AudioEngine: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var callAppName: String?
     @Published private(set) var availableUpdate: UpdateChecker.Release?
+    /// The result of the Check Now button, shown until the window closes.
+    @Published private(set) var updateCheckMessage: String?
     @Published var expandedApp: String?
     @Published private(set) var systemVolume: Double?
     @Published private(set) var outputLevels: [OutputLevel] = []
@@ -227,6 +229,11 @@ final class AudioEngine: ObservableObject {
     func setPreview(outputVolume volume: Double, for uid: String) {
         guard isPreview, let index = outputLevels.firstIndex(where: { $0.id == uid }) else { return }
         outputLevels[index].volume = volume
+    }
+
+    func setPreview(updateCheckMessage message: String) {
+        guard isPreview else { return }
+        updateCheckMessage = message
     }
 
     func setPreview(permission: AudioPermission.State) {
@@ -389,8 +396,28 @@ final class AudioEngine: ObservableObject {
             }
         } else {
             levels.levels = [:]
+            updateCheckMessage = nil
         }
         reconcile()
+    }
+
+    /// Works with the automatic check off: pressing the button is the permission.
+    func checkForUpdatesNow() {
+        guard !isPreview else { return }
+        updateCheckMessage = "Checking…"
+        Task { [weak self] in
+            let outcome = await UpdateChecker.check()
+            switch outcome {
+            case .upToDate:
+                self?.availableUpdate = nil
+                self?.updateCheckMessage = "Volumist \(UpdateChecker.currentVersion) is the latest version."
+            case .available(let release):
+                self?.availableUpdate = release
+                self?.updateCheckMessage = nil // the update notice takes over
+            case .failed:
+                self?.updateCheckMessage = "Couldn't reach GitHub. Try again later."
+            }
+        }
     }
 
     func checkForUpdates() {

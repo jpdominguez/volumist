@@ -180,8 +180,8 @@ writes it to disk or sends it anywhere, and you can verify that in the source co
 
 ### Does Volumist connect to the internet?
 
-Only if you turn on **Check for updates**. It then asks GitHub for the latest release, and sends no data about you or
-your Mac beyond what any web request does. Updates are never installed automatically.
+Only if you turn on **Check for updates** or press **Check Now**. It then asks GitHub for the latest release, and sends
+no data about you or your Mac beyond what any web request does. Updates are never installed automatically.
 
 ### Why does macOS say the app can't be verified?
 

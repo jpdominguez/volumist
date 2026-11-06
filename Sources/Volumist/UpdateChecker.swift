@@ -8,6 +8,10 @@ enum UpdateChecker {
         var version: String { tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName }
     }
 
+    enum Outcome: Equatable {
+        case upToDate, available(Release), failed
+    }
+
     private static let endpoint = URL(string: "https://api.github.com/repos/jpdominguez/volumist/releases/latest")!
 
     static var currentVersion: String {
@@ -19,6 +23,11 @@ enum UpdateChecker {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(Release.self, from: data)
+    }
+
+    static func check() async -> Outcome {
+        guard let release = try? await latestRelease() else { return .failed }
+        return isNewer(release.version, than: currentVersion) ? .available(release) : .upToDate
     }
 
     static func isNewer(_ version: String, than current: String) -> Bool {
