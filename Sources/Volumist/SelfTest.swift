@@ -461,6 +461,7 @@ enum SelfTest {
             var failures = 0
             var drift: CGFloat = 0
             var tallest = closed.height
+            var firstMove: String?
             // Up to a second: a slow machine can take longer than usual to resize, which isn't a failure.
             func wait(until done: () -> Bool) {
                 let limit = Date().addingTimeInterval(1)
@@ -473,12 +474,19 @@ enum SelfTest {
                 tallest = max(tallest, open.height)
                 if count == 1, open.height <= closed.height { failures += 1 }
                 drift = max(drift, abs(open.maxY - closed.maxY), abs(open.midX - closed.midX))
+                if abs(open.maxY - closed.maxY) > 1, firstMove == nil {
+                    firstMove = "moved when opening: \(closed) to \(open), screen \(window.screen?.frame ?? .zero)\n"
+                }
                 engine.expandedApp = nil
                 wait { window.frame.height == closed.height }
                 let shut = window.frame
                 if shut.height != closed.height { failures += 1 }
                 drift = max(drift, abs(shut.maxY - closed.maxY), abs(shut.midX - closed.midX))
+                if abs(shut.maxY - closed.maxY) > 1, firstMove == nil {
+                    firstMove = "moved when closing: \(closed) to \(shut), screen \(window.screen?.frame ?? .zero)\n"
+                }
             }
+            report += firstMove ?? ""
             report += "\(count) apps: closed height \(closed.height), tallest \(tallest), screen \(screen), failed \(failures) of 20, top edge moved \(drift)\n"
             passed = passed && failures == 0 && drift < 1 && tallest <= screen
 
@@ -527,7 +535,8 @@ enum SelfTest {
             controller.toggle()
             RunLoop.main.run(until: Date().addingTimeInterval(0.4))
             controller.popover.performClose(nil)
-            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            // At once, as a real click does: a slow machine could outlast the guard if this waited.
+            while controller.popover.isShown { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
             controller.toggle()
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             report += "press and release: stays closed: \(!controller.popover.isShown)\n"
