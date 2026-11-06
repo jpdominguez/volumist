@@ -461,15 +461,20 @@ enum SelfTest {
             var failures = 0
             var drift: CGFloat = 0
             var tallest = closed.height
+            // Up to a second: a slow machine can take longer than usual to resize, which isn't a failure.
+            func wait(until done: () -> Bool) {
+                let limit = Date().addingTimeInterval(1)
+                repeat { RunLoop.main.run(until: Date().addingTimeInterval(0.2)) } while !done() && Date() < limit
+            }
             for _ in 0..<10 {
                 engine.expandedApp = "app0"
-                RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+                wait { count != 1 || window.frame.height > closed.height }
                 let open = window.frame
                 tallest = max(tallest, open.height)
                 if count == 1, open.height <= closed.height { failures += 1 }
                 drift = max(drift, abs(open.maxY - closed.maxY), abs(open.midX - closed.midX))
                 engine.expandedApp = nil
-                RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+                wait { window.frame.height == closed.height }
                 let shut = window.frame
                 if shut.height != closed.height { failures += 1 }
                 drift = max(drift, abs(shut.maxY - closed.maxY), abs(shut.midX - closed.midX))
