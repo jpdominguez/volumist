@@ -147,8 +147,8 @@ They are the reason Volumist can't be submitted to the Mac App Store in its curr
 
 - Two outputs with different sample rates are untested, including Bluetooth headphones in call mode next to wired
   outputs. If macOS creates the aggregate but plays them badly, Volumist can't detect it.
-- `ci.yml` builds and checks the interface on macOS 14, 15 and Intel, but runners have no audio hardware. Real audio has
-  only been tested on Apple silicon.
+- `ci.yml` builds and checks the interface on macOS 15, macOS 26 and Intel, but runners have no audio hardware. Real
+  audio has only been tested on Apple silicon, and macOS 14 can't be tested there at all.
 - Apps that choose their own device are sent to Volumist's selected output once adjusted, because a tap mixes all of a
   process's audio together.
 - Taps deliver stereo, so surround audio is downmixed for adjusted apps.
