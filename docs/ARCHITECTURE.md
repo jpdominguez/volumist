@@ -92,8 +92,9 @@ without changing its path, and it is removed when the window closes, so there is
 
 ## Update check
 
-`UpdateChecker` is off by default. When enabled, it runs at launch and every 24 hours, and requests the latest release
-from the GitHub API. It only shows a link to the release page and never downloads anything. The **Check Now** button
+`UpdateChecker` is off by default. When enabled, it runs at launch and every 24 hours, and reads the version from where
+GitHub's public latest release page redirects to. It doesn't use the GitHub API, which allows only 60 requests an hour
+for each IP address, so a shared network can run out. It only shows a link to the release page and never downloads anything. The **Check Now** button
 makes the same request once, whether or not the automatic check is on.
 
 ## Two outputs

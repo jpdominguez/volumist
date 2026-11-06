@@ -415,7 +415,7 @@ final class AudioEngine: ObservableObject {
                 self?.availableUpdate = release
                 self?.updateCheckMessage = nil // the update notice takes over
             case .failed:
-                self?.updateCheckMessage = "Couldn't reach GitHub. Try again later."
+                self?.updateCheckMessage = "Couldn't check for updates. Try again later."
             }
         }
     }

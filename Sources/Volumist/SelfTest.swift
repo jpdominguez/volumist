@@ -402,6 +402,13 @@ enum SelfTest {
         }
         report += "calls: \(callResults.filter(\.1).count) of \(callResults.count) passed\n"
 
+        let tagged = URL(string: "https://github.com/jpdominguez/volumist/releases/tag/v1.3.2")!
+        let untagged = URL(string: "https://github.com/jpdominguez/volumist/releases")!
+        let versionRead = UpdateChecker.release(from: tagged)?.version == "1.3.2"
+            && UpdateChecker.release(from: tagged)?.htmlUrl == tagged && UpdateChecker.release(from: untagged) == nil
+        report += "version from the release page: \(versionRead)\n"
+        passed = passed && versionRead
+
         let engine = AudioEngine(preview: [], output: "Output", call: nil, expanded: nil, previewLevels: [:])
         let controller = AppController(engine: engine)
         controller.install()

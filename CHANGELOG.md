@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.2
+
+- Fixed the update check failing on shared networks, such as universities and offices.
+
 ## 1.3.1
 
 - A Check Now button, to look for a new version at any time.
