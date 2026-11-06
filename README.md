@@ -42,6 +42,8 @@ your speakers while Zoom stays in your headphones.
 - **System volume slider**, so everything is in one place.
 - **Per-app output routing**: send each app to a different speaker, monitor or pair of headphones.
 - **Two outputs at once**: play an app on two devices at the same time, such as speakers in two rooms.
+- **Volume for each output**: set every speaker, monitor and pair of headphones separately, even those with no volume
+  control of their own.
 - **Automatic lowering during calls**: music fades down when a call starts and back up when it ends. Choose how far
   it goes, what counts as a call, and which apps are left alone. Off by default.
 - **Automatic fallback**: if a chosen output disconnects, the app moves to the system output and returns when the

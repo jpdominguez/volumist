@@ -168,7 +168,27 @@ struct MixerView: View {
                 Spacer()
             }
 
-            if let volume = engine.systemVolume {
+            if engine.outputLevels.count > 1 {
+                VStack(spacing: 6) {
+                    ForEach(engine.outputLevels) { output in
+                        HStack(spacing: 8) {
+                            Text(output.name).font(.caption)
+                                .fontWeight(output.isCurrent ? .semibold : .regular)
+                                .foregroundStyle(output.isCurrent ? .primary : .secondary)
+                                .lineLimit(1).truncationMode(.tail)
+                                .frame(width: 120, alignment: .leading)
+                            Slider(value: Binding(get: { output.volume },
+                                                  set: { engine.setOutputVolume($0, for: output.id) }), in: 0...1)
+                                .controlSize(.small)
+                                .accessibilityLabel("Volume of \(output.name)")
+                            Text("\(Int((output.volume * 100).rounded()))%")
+                                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                .frame(width: 34, alignment: .trailing)
+                        }
+                    }
+                }
+                Divider()
+            } else if let volume = engine.systemVolume {
                 HStack(spacing: 8) {
                     Image(systemName: "speaker.fill").font(.caption).foregroundStyle(.secondary)
                     Slider(value: Binding(get: { volume }, set: { engine.setSystemVolume($0) }), in: 0...1)
@@ -501,19 +521,6 @@ struct AppDetails: View {
                              color: app.secondOutputMissing ? .systemOrange : .labelColor,
                              accessibilityLabel: "Second output of \(app.name)")
                     .fixedSize()
-                }
-                if app.secondOutputUID != nil, !app.secondOutputMissing, !app.secondOutputFailed {
-                    HStack(spacing: 6) {
-                        Text("Its volume").font(.caption).foregroundStyle(.secondary)
-                        Slider(value: Binding(get: { app.secondOutputVolume },
-                                              set: { engine.setSecondOutputVolume($0, for: app.id) }), in: 0...1)
-                            .controlSize(.small)
-                            .accessibilityLabel("Volume of the second output of \(app.name)")
-                        Text("\(Int((app.secondOutputVolume * 100).rounded()))%")
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                            .frame(width: 34, alignment: .trailing)
-                    }
-                    if engine.systemVolume != nil { note("Both outputs follow the Mac's volume and mute.") }
                 }
                 if app.secondOutputFailed {
                     note("macOS couldn't use these two outputs together, so only the first one is playing.", color: .orange)

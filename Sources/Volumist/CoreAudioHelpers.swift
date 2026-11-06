@@ -67,20 +67,17 @@ func writeSystemVolume(_ volume: Double, device: AudioObjectID) {
     AudioObjectSetPropertyData(device, &addr, 0, nil, UInt32(MemoryLayout<Float32>.size), &value)
 }
 
-func readSystemMute(_ device: AudioObjectID) -> Bool {
-    var addr = systemMuteAddress
-    guard AudioObjectHasProperty(device, &addr) else { return false }
-    var muted = UInt32(0)
-    var size = UInt32(MemoryLayout<UInt32>.size)
-    return AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &muted) == noErr && muted != 0
-}
-
-var systemMuteAddress: AudioObjectPropertyAddress {
-    address(kAudioDevicePropertyMute, scope: kAudioObjectPropertyScopeOutput)
-}
-
 var systemVolumeAddress: AudioObjectPropertyAddress {
     address(kAudioHardwareServiceDeviceProperty_VirtualMainVolume, scope: kAudioObjectPropertyScopeOutput)
+}
+
+/// One row of the general volume of each output.
+struct OutputLevel: Identifiable, Equatable {
+    let id: String
+    let name: String
+    var volume: Double
+    var isHardware: Bool // false for outputs without a volume of their own, such as many HDMI monitors
+    var isCurrent: Bool  // the Mac's output right now
 }
 
 struct OutputDevice: Identifiable, Equatable {

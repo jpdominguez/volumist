@@ -17,7 +17,6 @@ struct AudioApp: Identifiable {
     var outputMissing: Bool  // the chosen output is disconnected, so it plays through the system one
     var secondOutputUID: String? // also plays here
     var secondOutputName: String?
-    var secondOutputVolume = 1.0
     var secondOutputMissing = false
     var secondOutputFailed = false // macOS couldn't combine the two, so only the first one plays
     var isMono = false       // every output in use is mono, so balance can't do anything
@@ -120,6 +119,7 @@ final class AudioEngine: ObservableObject {
     @Published private(set) var availableUpdate: UpdateChecker.Release?
     @Published var expandedApp: String?
     @Published private(set) var systemVolume: Double?
+    @Published private(set) var outputLevels: [OutputLevel] = []
     @Published var listHeight: CGFloat = 0
     @Published var checksForUpdates = false {
         didSet {
@@ -155,7 +155,6 @@ final class AudioEngine: ObservableObject {
         var outputName: String? // so it can be shown while disconnected
         var secondOutputUID: String?
         var secondOutputName: String?
-        var secondOutputVolume: Double?
         // Optional so that settings saved by earlier versions still decode.
         var neverLower: Bool?
         var balance: Double?
@@ -185,7 +184,8 @@ final class AudioEngine: ObservableObject {
     private var volumeListener: AudioObjectPropertyListenerBlock?
     private var callTracker = CallTracker()
     private var failedOutputs: [String: [String]] = [:] // tried and refused: not retried until they change
-    private var isSystemMuted = false
+    private var softwareLevels: [String: Double] = [:] // by device UID, for outputs without a volume of their own
+    private let outputLevelsKey = "outputLevels"
     /// Diagnostics only: behaves as if this app had the microphone open.
     var simulatedCallApp: String? { didSet { reconcile() } }
     private var identities: [pid_t: AppIdentity] = [:]
@@ -211,6 +211,11 @@ final class AudioEngine: ObservableObject {
         _launchAtLogin = Published(initialValue: false)
         _expandedApp = Published(initialValue: expanded)
         _systemVolume = Published(initialValue: 0.6)
+        _outputLevels = Published(initialValue: [
+            OutputLevel(id: "Headphones", name: "Headphones", volume: 0.6, isHardware: true, isCurrent: true),
+            OutputLevel(id: "External Speakers", name: "External Speakers", volume: 0.8, isHardware: true, isCurrent: false),
+            OutputLevel(id: "Display Audio", name: "Display Audio", volume: 1, isHardware: false, isCurrent: false),
+        ])
         _devices = Published(initialValue: ["Headphones", "External Speakers", "Display Audio"].map {
             OutputDevice(id: $0, object: 0, name: $0)
         })
@@ -243,6 +248,10 @@ final class AudioEngine: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: duckingKey),
            let saved = try? JSONDecoder().decode(DuckingOptions.self, from: data) {
             _ducking = Published(initialValue: saved)
+        }
+        if let data = UserDefaults.standard.data(forKey: outputLevelsKey),
+           let saved = try? JSONDecoder().decode([String: Double].self, from: data) {
+            softwareLevels = saved
         }
         _checksForUpdates = Published(initialValue: UserDefaults.standard.bool(forKey: updatesKey))
         if checksForUpdates { checkForUpdates() }
@@ -297,15 +306,22 @@ final class AudioEngine: ObservableObject {
 
     /// A nil `uid` plays on a single output again.
     func setSecondOutput(_ uid: String?, name: String? = nil, for id: String) {
-        change(id) {
-            $0.secondOutputUID = uid
-            $0.secondOutputName = name
-            if uid == nil { $0.secondOutputVolume = nil }
-        }
+        change(id) { $0.secondOutputUID = uid; $0.secondOutputName = name }
     }
 
-    func setSecondOutputVolume(_ volume: Double, for id: String) {
-        change(id) { $0.secondOutputVolume = volume == 1 ? nil : volume }
+    /// Outputs with a volume of their own use it. For the rest Volumist lowers what it plays there.
+    func setOutputVolume(_ volume: Double, for uid: String) {
+        guard !isPreview, let index = outputLevels.firstIndex(where: { $0.id == uid }) else { return }
+        outputLevels[index].volume = volume
+        if outputLevels[index].isHardware {
+            if let device = devices.first(where: { $0.id == uid }) { writeSystemVolume(volume, device: device.object) }
+            return
+        }
+        softwareLevels[uid] = volume == 1 ? nil : volume
+        if let data = try? JSONEncoder().encode(softwareLevels) {
+            UserDefaults.standard.set(data, forKey: outputLevelsKey)
+        }
+        reconcile()
     }
 
     /// What can be added as a call app: open apps, plus those already added.
@@ -444,7 +460,10 @@ final class AudioEngine: ObservableObject {
         let lower = shouldLower(id, setting: setting, group: group)
         if !lower, lowered.contains(id) { lastChange[id] = now } // holds the tap while it fades back up
         let held = now.timeIntervalSince(lastChange[id] ?? .distantPast) < Self.tapHold
-        guard !setting.usesDefaultAudio || lower || (held && sessions[id] != nil) else {
+        let outputs = targetOutputs(for: setting)
+        // Only Volumist can lower an output with no volume of its own, so apps playing there need a tap.
+        let outputLowered = outputs.contains { softwareGain($0) != 1 } && (group.isPlaying || sessions[id] != nil)
+        guard !setting.usesDefaultAudio || lower || outputLowered || (held && sessions[id] != nil) else {
             sessions[id] = nil
             lowered.remove(id)
             return
@@ -471,28 +490,19 @@ final class AudioEngine: ObservableObject {
         // A tap only mutes once it has run, so I/O also runs for muted apps and at least once for
         // idle ones. A tap that was created but never read lets the app's audio through.
         let recentlyPlaying = now.timeIntervalSince(lastPlayed[id] ?? .distantPast) < Self.ioGrace
-        let outputs = targetOutputs(for: setting)
         if recentlyPlaying || !session.hasStarted, !outputs.isEmpty {
             try start(session, on: outputs, for: id)
         } else {
             session.stop()
         }
-        applyOutputGains(session, setting: setting)
+        session.setOutputGains(first: session.outputs.first.map(softwareGain) ?? 1,
+                               second: session.outputs.dropFirst().first.map(softwareGain) ?? 1)
     }
 
-    /// The Mac's volume and mute only reach its current output, so with two outputs the other one
-    /// follows them here. Gains use the same curve as the app volumes.
-    private func applyOutputGains(_ session: TapSession, setting: Setting) {
-        guard session.outputs.count > 1 else { return session.setOutputGains(first: 1, second: 1) }
-        let level = isSystemMuted ? 0 : Float(systemVolume ?? 1)
-        let following = level * level
-        let second = Float(setting.secondOutputVolume ?? 1)
-        session.setOutputGains(first: session.outputs[0] == defaultOutputUID ? 1 : following,
-                               second: second * second * (session.outputs[1] == defaultOutputUID ? 1 : following))
-    }
-
-    private func applyOutputGains() {
-        for (id, session) in sessions { applyOutputGains(session, setting: settings[id] ?? Setting()) }
+    /// Same curve as the app volumes.
+    private func softwareGain(_ uid: String) -> Float {
+        let level = Float(softwareLevels[uid] ?? 1)
+        return level * level
     }
 
     /// A pair macOS can't combine must not leave the app silent, or be retried on every pass.
@@ -589,6 +599,12 @@ final class AudioEngine: ObservableObject {
         let name = system.flatMap { readString($0, kAudioObjectPropertyName) } ?? ""
         if name != outputName { outputName = name }
         watchSystemVolume(on: system)
+        let levels = fresh.map { device -> OutputLevel in
+            let hardware = readSystemVolume(device.object)
+            return OutputLevel(id: device.id, name: device.name, volume: hardware ?? softwareLevels[device.id] ?? 1,
+                               isHardware: hardware != nil, isCurrent: device.id == defaultOutputUID)
+        }
+        if levels != outputLevels { outputLevels = levels }
 
         // The aggregate is tied to the device's sample rate: rebuild it when that changes.
         let selector = kAudioDevicePropertyNominalSampleRate
@@ -643,8 +659,6 @@ final class AudioEngine: ObservableObject {
             if let old = volumeDevice, let listener = volumeListener {
                 var addr = systemVolumeAddress
                 AudioObjectRemovePropertyListenerBlock(old, &addr, .main, listener)
-                var mute = systemMuteAddress
-                AudioObjectRemovePropertyListenerBlock(old, &mute, .main, listener)
             }
             volumeDevice = device
             volumeListener = nil
@@ -653,23 +667,16 @@ final class AudioEngine: ObservableObject {
                     MainActor.assumeIsolated {
                         guard let self, let device = self.volumeDevice else { return }
                         self.systemVolume = readSystemVolume(device)
-                        self.isSystemMuted = readSystemMute(device)
-                        self.applyOutputGains()
                     }
                 }
                 var addr = systemVolumeAddress
                 if AudioObjectAddPropertyListenerBlock(device, &addr, .main, listener) == noErr {
                     volumeListener = listener
                 }
-                var mute = systemMuteAddress
-                if AudioObjectHasProperty(device, &mute) {
-                    AudioObjectAddPropertyListenerBlock(device, &mute, .main, listener)
-                }
             }
         }
         let volume = device.flatMap(readSystemVolume)
         if volume != systemVolume { systemVolume = volume }
-        isSystemMuted = device.map(readSystemMute) ?? false
     }
 
     private func watchProcess(_ object: AudioObjectID) {
@@ -705,7 +712,6 @@ final class AudioEngine: ObservableObject {
                             outputUID: setting.outputUID, outputName: setting.outputName,
                             outputMissing: setting.outputUID.map { uid in !devices.contains { $0.id == uid } } ?? false,
                             secondOutputUID: setting.secondOutputUID, secondOutputName: setting.secondOutputName,
-                            secondOutputVolume: setting.secondOutputVolume ?? 1,
                             secondOutputMissing: setting.secondOutputUID.map { uid in !devices.contains { $0.id == uid } } ?? false,
                             secondOutputFailed: failedOutputs[id] == outputs && outputs.count > 1,
                             isMono: !targets.isEmpty && targets.allSatisfy { $0.channels == 1 },
@@ -724,7 +730,6 @@ final class AudioEngine: ObservableObject {
             && $0.volume == $1.volume && $0.isMuted == $1.isMuted
             && $0.outputUID == $1.outputUID && $0.outputMissing == $1.outputMissing
             && $0.secondOutputUID == $1.secondOutputUID && $0.secondOutputMissing == $1.secondOutputMissing
-            && $0.secondOutputVolume == $1.secondOutputVolume
             && $0.secondOutputFailed == $1.secondOutputFailed && $0.isMono == $1.isMono && $0.mayEcho == $1.mayEcho
             && $0.neverLower == $1.neverLower && $0.isLowered == $1.isLowered
             && $0.balance == $1.balance && $0.equalizer == $1.equalizer
